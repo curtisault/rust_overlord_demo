@@ -1121,19 +1121,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caf4aa5b0f434c91fe5c7f1ecb6a5ece2130b02ad2a590589dda5146df959001"
 
 [[package]]
-name = "rust_actor_demo"
-version = "0.1.0"
-dependencies = [
- "actix",
- "actix-web",
- "chrono",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1285,6 +1272,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "task-core"
+version = "0.1.0"
+dependencies = [
+ "actix",
+ "chrono",
+ "serde",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "task-web"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "serde_json",
+ "task-core",
 ]
 
 [[package]]
