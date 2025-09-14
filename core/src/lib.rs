@@ -1,6 +1,7 @@
-use actix::{Actor, ActorContext, AsyncContext, Context, Handler, Message, MessageResult};
+use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message, MessageResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -144,6 +145,206 @@ impl Handler<GetTaskStatus> for TaskActor {
 
     fn handle(&mut self, _msg: GetTaskStatus, _ctx: &mut Self::Context) -> Self::Result {
         MessageResult(self.metadata.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct TaskManagerActor {
+    tasks: HashMap<Uuid, Addr<TaskActor>>,
+    task_metadata: HashMap<Uuid, TaskMetadata>,
+}
+
+impl TaskManagerActor {
+    pub fn new() -> Self {
+        Self {
+            tasks: HashMap::new(),
+            task_metadata: HashMap::new(),
+        }
+    }
+
+    fn cleanup_finished_task(&mut self, task_id: Uuid) {
+        if let Some(_addr) = self.tasks.remove(&task_id) {
+            println!("Cleaning up finished task: {}", task_id);
+        }
+    }
+}
+
+impl Default for TaskManagerActor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Actor for TaskManagerActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        println!("TaskManagerActor started");
+    }
+
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        println!("TaskManagerActor stopped");
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Uuid")]
+pub struct CreateTask {
+    pub name: String,
+    pub message: String,
+    pub task_type: TaskType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TaskType {
+    Quick,
+    Long,
+    Error,
+}
+
+#[derive(Message)]
+#[rtype(result = "Vec<TaskMetadata>")]
+pub struct GetAllTasks;
+
+#[derive(Message)]
+#[rtype(result = "Option<TaskMetadata>")]
+pub struct GetTask {
+    pub id: Uuid,
+}
+
+#[derive(Message)]
+#[rtype(result = "bool")]
+pub struct CancelTaskById {
+    pub id: Uuid,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct TaskFinished {
+    pub id: Uuid,
+    pub metadata: TaskMetadata,
+}
+
+impl Handler<CreateTask> for TaskManagerActor {
+    type Result = MessageResult<CreateTask>;
+
+    fn handle(&mut self, msg: CreateTask, ctx: &mut Self::Context) -> Self::Result {
+        let task = TaskActor::new(msg.name, msg.message);
+        let task_id = task.metadata.id;
+        let initial_metadata = task.metadata.clone();
+        let task_addr = task.start();
+
+        // Store initial metadata
+        self.task_metadata.insert(task_id, initial_metadata);
+        self.tasks.insert(task_id, task_addr.clone());
+
+        // Start the task based on type
+        let duration = match msg.task_type {
+            TaskType::Quick => Duration::from_secs(2),
+            TaskType::Long => Duration::from_secs(10),
+            TaskType::Error => {
+                // Send error message immediately
+                let error_addr = task_addr.clone();
+                actix::spawn(async move {
+                    let _ = error_addr.send(ErrorTask {
+                        error: "Simulated task error".to_string(),
+                    }).await;
+                });
+                return MessageResult(task_id);
+            }
+        };
+
+        // Send start message
+        let start_addr = task_addr.clone();
+        actix::spawn(async move {
+            let _ = start_addr.send(StartTask { duration }).await;
+        });
+
+        // Set up task completion notification
+        let manager_addr = ctx.address();
+        actix::spawn(async move {
+            // Wait for task to finish (a bit longer than the task duration)
+            tokio::time::sleep(duration + Duration::from_millis(100)).await;
+
+            // Try to get final status and notify manager
+            if let Ok(final_metadata) = task_addr.send(GetTaskStatus).await {
+                let _ = manager_addr.send(TaskFinished {
+                    id: task_id,
+                    metadata: final_metadata,
+                }).await;
+            } else {
+                // Task already stopped, create finished metadata
+                let finished_metadata = TaskMetadata {
+                    id: task_id,
+                    name: "Unknown".to_string(),
+                    message: "Task completed".to_string(),
+                    status: TaskStatus::Completed,
+                    started_at: Utc::now(),
+                    finished_at: Some(Utc::now()),
+                    result: Some("Task completed successfully".to_string()),
+                    error: None,
+                };
+
+                let _ = manager_addr.send(TaskFinished {
+                    id: task_id,
+                    metadata: finished_metadata,
+                }).await;
+            }
+        });
+
+        MessageResult(task_id)
+    }
+}
+
+impl Handler<GetAllTasks> for TaskManagerActor {
+    type Result = Vec<TaskMetadata>;
+
+    fn handle(&mut self, _msg: GetAllTasks, _ctx: &mut Self::Context) -> Self::Result {
+        self.task_metadata.values().cloned().collect()
+    }
+}
+
+impl Handler<GetTask> for TaskManagerActor {
+    type Result = Option<TaskMetadata>;
+
+    fn handle(&mut self, msg: GetTask, _ctx: &mut Self::Context) -> Self::Result {
+        self.task_metadata.get(&msg.id).cloned()
+    }
+}
+
+impl Handler<CancelTaskById> for TaskManagerActor {
+    type Result = bool;
+
+    fn handle(&mut self, msg: CancelTaskById, _ctx: &mut Self::Context) -> Self::Result {
+        if let Some(task_addr) = self.tasks.get(&msg.id) {
+            let cancel_addr = task_addr.clone();
+            actix::spawn(async move {
+                let _ = cancel_addr.send(CancelTask).await;
+            });
+
+            // Update metadata to show cancelled status
+            if let Some(metadata) = self.task_metadata.get_mut(&msg.id) {
+                metadata.status = TaskStatus::Error;
+                metadata.finished_at = Some(Utc::now());
+                metadata.error = Some("Task was cancelled".to_string());
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Handler<TaskFinished> for TaskManagerActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: TaskFinished, _ctx: &mut Self::Context) -> Self::Result {
+        // Update stored metadata with final results
+        self.task_metadata.insert(msg.id, msg.metadata);
+
+        // Clean up the task actor reference
+        self.cleanup_finished_task(msg.id);
     }
 }
 
