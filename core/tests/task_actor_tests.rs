@@ -1,5 +1,5 @@
-use task_core::*;
 use actix::Actor;
+use task_core::*;
 
 #[test]
 fn test_task_actor_creation() {
@@ -36,7 +36,11 @@ async fn test_task_status_query() {
 
 #[actix_rt::test]
 async fn test_task_metadata_update_on_completion() {
-    let mut task = TaskActor::new("Metadata Test".to_string(), "Test message".to_string(), 5000);
+    let mut task = TaskActor::new(
+        "Metadata Test".to_string(),
+        "Test message".to_string(),
+        5000,
+    );
 
     // Simulate completion
     task.metadata.status = TaskStatus::Completed;
@@ -51,7 +55,11 @@ async fn test_task_metadata_update_on_completion() {
 
 #[actix_rt::test]
 async fn test_task_metadata_update_on_error() {
-    let mut task = TaskActor::new("Error Metadata Test".to_string(), "Test message".to_string(), 5000);
+    let mut task = TaskActor::new(
+        "Error Metadata Test".to_string(),
+        "Test message".to_string(),
+        5000,
+    );
 
     // Simulate error
     task.metadata.status = TaskStatus::Error;

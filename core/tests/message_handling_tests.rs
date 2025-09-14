@@ -1,16 +1,22 @@
-use task_core::*;
 use actix::Actor;
 use std::time::Duration;
+use task_core::*;
 
 #[actix_rt::test]
 async fn test_task_completion() {
-    let task = TaskActor::new("Complete Test".to_string(), "Complete message".to_string(), 5000);
+    let task = TaskActor::new(
+        "Complete Test".to_string(),
+        "Complete message".to_string(),
+        5000,
+    );
     let addr = task.start();
 
     // Send completion message
     addr.send(CompleteTask {
         result: "Task finished successfully".to_string(),
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Give a moment for the actor to process and stop
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -28,7 +34,9 @@ async fn test_task_error_handling() {
     // Send error message
     addr.send(ErrorTask {
         error: "Something went wrong".to_string(),
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Give a moment for the actor to process and stop
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -40,7 +48,11 @@ async fn test_task_error_handling() {
 
 #[actix_rt::test]
 async fn test_task_cancellation() {
-    let task = TaskActor::new("Cancel Test".to_string(), "Cancel message".to_string(), 5000);
+    let task = TaskActor::new(
+        "Cancel Test".to_string(),
+        "Cancel message".to_string(),
+        5000,
+    );
     let addr = task.start();
 
     // Send cancel message
@@ -62,7 +74,9 @@ async fn test_start_task_message() {
     // Send start message with very short duration
     addr.send(StartTask {
         duration: Duration::from_millis(50),
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     // Wait a bit longer than the task duration
     tokio::time::sleep(Duration::from_millis(100)).await;

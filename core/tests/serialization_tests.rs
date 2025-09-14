@@ -1,6 +1,6 @@
+use chrono::Utc;
 use task_core::*;
 use uuid::Uuid;
-use chrono::Utc;
 
 #[test]
 fn test_task_metadata_serialization() {

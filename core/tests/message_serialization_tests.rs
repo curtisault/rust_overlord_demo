@@ -1,5 +1,5 @@
-use task_core::*;
 use std::time::Duration;
+use task_core::*;
 use uuid::Uuid;
 
 #[test]
@@ -22,7 +22,10 @@ fn test_task_type_serialization() {
     let types = vec![
         TaskType::Quick { timeout_ms: None },
         TaskType::Long { timeout_ms: None },
-        TaskType::Error { timeout_ms: None, error_type: ErrorType::Immediate }
+        TaskType::Error {
+            timeout_ms: None,
+            error_type: ErrorType::Immediate,
+        },
     ];
 
     for task_type in types {

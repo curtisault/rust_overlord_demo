@@ -1,7 +1,7 @@
 use actix::Actor;
 use actix_web::{
-    delete, get, post, web, App, HttpResponse, HttpServer, Responder, Result, middleware::Logger,
-    http::header,
+    delete, get, http::header, middleware::Logger, post, web, App, HttpResponse, HttpServer,
+    Responder, Result,
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ enum TaskTypeRequest {
     #[serde(rename = "error")]
     Error {
         timeout_ms: Option<u64>,
-        error_type: Option<String>
+        error_type: Option<String>,
     },
     #[serde(rename = "custom")]
     Custom {
@@ -46,7 +46,10 @@ impl TaskTypeRequest {
         match self {
             TaskTypeRequest::Quick { timeout_ms } => TaskType::Quick { timeout_ms },
             TaskTypeRequest::Long { timeout_ms } => TaskType::Long { timeout_ms },
-            TaskTypeRequest::Error { timeout_ms, error_type } => {
+            TaskTypeRequest::Error {
+                timeout_ms,
+                error_type,
+            } => {
                 let error_type = match error_type.as_deref() {
                     Some("immediate") => ErrorType::Immediate,
                     Some("timeout") => ErrorType::Timeout,
@@ -55,14 +58,19 @@ impl TaskTypeRequest {
                     Some("validation") => ErrorType::ValidationError,
                     _ => ErrorType::Immediate,
                 };
-                TaskType::Error { timeout_ms, error_type }
-            },
-            TaskTypeRequest::Custom { custom_name, timeout_ms, failure_rate } => {
-                TaskType::Custom {
-                    name: custom_name,
+                TaskType::Error {
                     timeout_ms,
-                    failure_rate,
+                    error_type,
                 }
+            }
+            TaskTypeRequest::Custom {
+                custom_name,
+                timeout_ms,
+                failure_rate,
+            } => TaskType::Custom {
+                name: custom_name,
+                timeout_ms,
+                failure_rate,
             },
         }
     }
@@ -123,10 +131,7 @@ async fn get_all_tasks(data: web::Data<AppState>) -> Result<impl Responder> {
 }
 
 #[get("/tasks/{id}")]
-async fn get_task(
-    data: web::Data<AppState>,
-    path: web::Path<Uuid>,
-) -> Result<impl Responder> {
+async fn get_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result<impl Responder> {
     let task_id = path.into_inner();
 
     let task = data
@@ -137,17 +142,15 @@ async fn get_task(
 
     match task {
         Some(task_metadata) => Ok(HttpResponse::Ok().json(ApiResponse::success(task_metadata))),
-        None => Ok(HttpResponse::NotFound().json(ApiResponse::<()>::error(
-            "Task not found".to_string(),
-        ))),
+        None => {
+            Ok(HttpResponse::NotFound()
+                .json(ApiResponse::<()>::error("Task not found".to_string())))
+        }
     }
 }
 
 #[delete("/tasks/{id}")]
-async fn cancel_task(
-    data: web::Data<AppState>,
-    path: web::Path<Uuid>,
-) -> Result<impl Responder> {
+async fn cancel_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result<impl Responder> {
     let task_id = path.into_inner();
 
     let cancelled = data

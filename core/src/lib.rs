@@ -166,8 +166,10 @@ impl Handler<StartTask> for TaskActor {
     type Result = ();
 
     fn handle(&mut self, msg: StartTask, ctx: &mut Self::Context) -> Self::Result {
-        println!("Starting task {} with duration {:?} (timeout: {}ms)",
-            self.metadata.name, msg.duration, self.metadata.timeout_ms);
+        println!(
+            "Starting task {} with duration {:?} (timeout: {}ms)",
+            self.metadata.name, msg.duration, self.metadata.timeout_ms
+        );
 
         let addr = ctx.address();
         let timeout = Duration::from_millis(self.metadata.timeout_ms);
@@ -181,9 +183,11 @@ impl Handler<StartTask> for TaskActor {
         let work_addr = addr.clone();
         actix::spawn(async move {
             tokio::time::sleep(msg.duration).await;
-            let _ = work_addr.send(CompleteTask {
-                result: "Task completed successfully".to_string(),
-            }).await;
+            let _ = work_addr
+                .send(CompleteTask {
+                    result: "Task completed successfully".to_string(),
+                })
+                .await;
         });
     }
 }
@@ -195,11 +199,11 @@ impl Handler<TimeoutTask> for TaskActor {
         if self.metadata.status == TaskStatus::InProgress {
             self.metadata.mark_error(
                 format!("Task timed out after {}ms", self.metadata.timeout_ms),
-                true
+                true,
             );
-            println!("Task {} timed out after {}ms",
-                self.metadata.name,
-                self.metadata.timeout_ms
+            println!(
+                "Task {} timed out after {}ms",
+                self.metadata.name, self.metadata.timeout_ms
             );
             ctx.stop();
         }
@@ -211,7 +215,8 @@ impl Handler<CompleteTask> for TaskActor {
 
     fn handle(&mut self, msg: CompleteTask, ctx: &mut Self::Context) -> Self::Result {
         self.metadata.mark_completed(msg.result);
-        println!("Task {} completed in {}ms: {:?}",
+        println!(
+            "Task {} completed in {}ms: {:?}",
             self.metadata.name,
             self.metadata.actual_duration_ms.unwrap_or(0),
             self.metadata.result
@@ -225,7 +230,8 @@ impl Handler<ErrorTask> for TaskActor {
 
     fn handle(&mut self, msg: ErrorTask, ctx: &mut Self::Context) -> Self::Result {
         self.metadata.mark_error(msg.error, false);
-        println!("Task {} failed after {}ms: {:?}",
+        println!(
+            "Task {} failed after {}ms: {:?}",
             self.metadata.name,
             self.metadata.actual_duration_ms.unwrap_or(0),
             self.metadata.error
@@ -239,7 +245,8 @@ impl Handler<CancelTask> for TaskActor {
 
     fn handle(&mut self, _msg: CancelTask, ctx: &mut Self::Context) -> Self::Result {
         self.metadata.mark_cancelled();
-        println!("Task {} cancelled after {}ms",
+        println!(
+            "Task {} cancelled after {}ms",
             self.metadata.name,
             self.metadata.actual_duration_ms.unwrap_or(0)
         );
@@ -304,9 +311,16 @@ pub struct CreateTask {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskType {
-    Quick { timeout_ms: Option<u64> },
-    Long { timeout_ms: Option<u64> },
-    Error { timeout_ms: Option<u64>, error_type: ErrorType },
+    Quick {
+        timeout_ms: Option<u64>,
+    },
+    Long {
+        timeout_ms: Option<u64>,
+    },
+    Error {
+        timeout_ms: Option<u64>,
+        error_type: ErrorType,
+    },
     Custom {
         name: String,
         timeout_ms: u64,
@@ -348,7 +362,7 @@ impl TaskType {
                 } else {
                     None
                 }
-            },
+            }
             _ => None,
         }
     }
@@ -356,10 +370,10 @@ impl TaskType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ErrorType {
-    Immediate,      // Fails immediately
-    Timeout,        // Fails after timeout
-    Random,         // Random failure during execution
-    NetworkError,   // Simulates network failure
+    Immediate,       // Fails immediately
+    Timeout,         // Fails after timeout
+    Random,          // Random failure during execution
+    NetworkError,    // Simulates network failure
     ValidationError, // Simulates validation error
 }
 
@@ -446,11 +460,7 @@ impl Handler<CreateTask> for TaskManagerActor {
             msg.name.clone()
         };
 
-        let task = TaskActor::new(
-            task_name,
-            msg.message.clone(),
-            timeout.as_millis() as u64
-        );
+        let task = TaskActor::new(task_name, msg.message.clone(), timeout.as_millis() as u64);
 
         let task_id = task.metadata.id;
         let initial_metadata = task.metadata.clone();
@@ -466,12 +476,14 @@ impl Handler<CreateTask> for TaskManagerActor {
                 ErrorType::Immediate => {
                     let error_addr = task_addr.clone();
                     actix::spawn(async move {
-                        let _ = error_addr.send(ErrorTask {
-                            error: "Immediate failure simulation".to_string(),
-                        }).await;
+                        let _ = error_addr
+                            .send(ErrorTask {
+                                error: "Immediate failure simulation".to_string(),
+                            })
+                            .await;
                     });
                     return MessageResult(task_id);
-                },
+                }
                 _ => {
                     // Other error types will be handled during execution
                 }
@@ -488,14 +500,18 @@ impl Handler<CreateTask> for TaskManagerActor {
                     ErrorType::Random => Duration::from_millis(timeout.as_millis() as u64 / 2), // 50% of timeout
                     _ => Duration::from_millis(timeout.as_millis() as u64 / 3), // 33% of timeout
                 }
-            },
+            }
             TaskType::Custom { .. } => Duration::from_millis(timeout.as_millis() as u64 * 3 / 4), // 75% of timeout
         };
 
         // Send start message
         let start_addr = task_addr.clone();
         actix::spawn(async move {
-            let _ = start_addr.send(StartTask { duration: work_duration }).await;
+            let _ = start_addr
+                .send(StartTask {
+                    duration: work_duration,
+                })
+                .await;
         });
 
         // Set up task completion notification
@@ -507,10 +523,12 @@ impl Handler<CreateTask> for TaskManagerActor {
 
             // Try to get final status and notify manager
             if let Ok(final_metadata) = task_addr.send(GetTaskStatus).await {
-                let _ = manager_addr.send(TaskFinished {
-                    id: task_id,
-                    metadata: final_metadata,
-                }).await;
+                let _ = manager_addr
+                    .send(TaskFinished {
+                        id: task_id,
+                        metadata: final_metadata,
+                    })
+                    .await;
             } else {
                 // Task already stopped, we'll get notified through other means
             }
@@ -569,4 +587,3 @@ impl Handler<TaskFinished> for TaskManagerActor {
         self.cleanup_finished_task(msg.id);
     }
 }
-
