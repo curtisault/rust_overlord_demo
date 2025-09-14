@@ -14,21 +14,21 @@ async fn main() {
     let quick_task = manager.send(CreateTask {
         name: "Quick Task".to_string(),
         message: "A simple 2-second task".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     }).await.unwrap();
     println!("Created Quick Task: {}", quick_task);
 
     let long_task = manager.send(CreateTask {
         name: "Long Task".to_string(),
         message: "A background 10-second task".to_string(),
-        task_type: TaskType::Long,
+        task_type: TaskType::Long { timeout_ms: None },
     }).await.unwrap();
     println!("Created Long Task: {}", long_task);
 
     let error_task = manager.send(CreateTask {
         name: "Error Task".to_string(),
         message: "This task will fail".to_string(),
-        task_type: TaskType::Error,
+        task_type: TaskType::Error { timeout_ms: None, error_type: ErrorType::Immediate },
     }).await.unwrap();
     println!("Created Error Task: {}", error_task);
 

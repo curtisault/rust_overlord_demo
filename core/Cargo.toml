@@ -9,6 +9,7 @@ serde = { version = "1.0", features = ["derive"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"
 
 [dev-dependencies]
 actix-rt = "2.11.0"

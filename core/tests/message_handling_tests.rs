@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[actix_rt::test]
 async fn test_task_completion() {
-    let task = TaskActor::new("Complete Test".to_string(), "Complete message".to_string());
+    let task = TaskActor::new("Complete Test".to_string(), "Complete message".to_string(), 5000);
     let addr = task.start();
 
     // Send completion message
@@ -22,7 +22,7 @@ async fn test_task_completion() {
 
 #[actix_rt::test]
 async fn test_task_error_handling() {
-    let task = TaskActor::new("Error Test".to_string(), "Error message".to_string());
+    let task = TaskActor::new("Error Test".to_string(), "Error message".to_string(), 5000);
     let addr = task.start();
 
     // Send error message
@@ -40,7 +40,7 @@ async fn test_task_error_handling() {
 
 #[actix_rt::test]
 async fn test_task_cancellation() {
-    let task = TaskActor::new("Cancel Test".to_string(), "Cancel message".to_string());
+    let task = TaskActor::new("Cancel Test".to_string(), "Cancel message".to_string(), 5000);
     let addr = task.start();
 
     // Send cancel message
@@ -56,7 +56,7 @@ async fn test_task_cancellation() {
 
 #[actix_rt::test]
 async fn test_start_task_message() {
-    let task = TaskActor::new("Start Test".to_string(), "Start message".to_string());
+    let task = TaskActor::new("Start Test".to_string(), "Start message".to_string(), 5000);
     let addr = task.start();
 
     // Send start message with very short duration

@@ -16,7 +16,7 @@ async fn test_create_quick_task() {
     let task_id = manager.send(CreateTask {
         name: "Quick Test".to_string(),
         message: "Test quick task".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     }).await.unwrap();
 
     // Should return a valid UUID
@@ -42,7 +42,7 @@ async fn test_create_error_task() {
     let task_id = manager.send(CreateTask {
         name: "Error Test".to_string(),
         message: "Test error task".to_string(),
-        task_type: TaskType::Error,
+        task_type: TaskType::Error { timeout_ms: None, error_type: ErrorType::Immediate },
     }).await.unwrap();
 
     // Give a moment for error to be processed
@@ -60,13 +60,13 @@ async fn test_get_all_tasks() {
     let task1_id = manager.send(CreateTask {
         name: "Task 1".to_string(),
         message: "First task".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     }).await.unwrap();
 
     let task2_id = manager.send(CreateTask {
         name: "Task 2".to_string(),
         message: "Second task".to_string(),
-        task_type: TaskType::Long,
+        task_type: TaskType::Long { timeout_ms: None },
     }).await.unwrap();
 
     // Give a moment for tasks to be created
@@ -88,7 +88,7 @@ async fn test_cancel_task() {
     let task_id = manager.send(CreateTask {
         name: "Cancellable Task".to_string(),
         message: "This task will be cancelled".to_string(),
-        task_type: TaskType::Long,
+        task_type: TaskType::Long { timeout_ms: None },
     }).await.unwrap();
 
     // Give a moment for task to start
@@ -136,19 +136,19 @@ async fn test_task_types() {
     let quick_id = manager.send(CreateTask {
         name: "Quick".to_string(),
         message: "Quick task".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     }).await.unwrap();
 
     let long_id = manager.send(CreateTask {
         name: "Long".to_string(),
         message: "Long task".to_string(),
-        task_type: TaskType::Long,
+        task_type: TaskType::Long { timeout_ms: None },
     }).await.unwrap();
 
     let error_id = manager.send(CreateTask {
         name: "Error".to_string(),
         message: "Error task".to_string(),
-        task_type: TaskType::Error,
+        task_type: TaskType::Error { timeout_ms: None, error_type: ErrorType::Immediate },
     }).await.unwrap();
 
     // All should be valid UUIDs
@@ -164,7 +164,7 @@ async fn test_task_completion_lifecycle() {
     let task_id = manager.send(CreateTask {
         name: "Lifecycle Test".to_string(),
         message: "Test full lifecycle".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     }).await.unwrap();
 
     // Initial state

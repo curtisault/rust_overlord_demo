@@ -18,7 +18,54 @@ struct AppState {
 struct CreateTaskRequest {
     name: String,
     message: String,
-    task_type: TaskType,
+    task_type: TaskTypeRequest,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "type")]
+enum TaskTypeRequest {
+    #[serde(rename = "quick")]
+    Quick { timeout_ms: Option<u64> },
+    #[serde(rename = "long")]
+    Long { timeout_ms: Option<u64> },
+    #[serde(rename = "error")]
+    Error {
+        timeout_ms: Option<u64>,
+        error_type: Option<String>
+    },
+    #[serde(rename = "custom")]
+    Custom {
+        custom_name: String,
+        timeout_ms: u64,
+        failure_rate: Option<f32>,
+    },
+}
+
+impl TaskTypeRequest {
+    fn to_task_type(self) -> TaskType {
+        match self {
+            TaskTypeRequest::Quick { timeout_ms } => TaskType::Quick { timeout_ms },
+            TaskTypeRequest::Long { timeout_ms } => TaskType::Long { timeout_ms },
+            TaskTypeRequest::Error { timeout_ms, error_type } => {
+                let error_type = match error_type.as_deref() {
+                    Some("immediate") => ErrorType::Immediate,
+                    Some("timeout") => ErrorType::Timeout,
+                    Some("random") => ErrorType::Random,
+                    Some("network") => ErrorType::NetworkError,
+                    Some("validation") => ErrorType::ValidationError,
+                    _ => ErrorType::Immediate,
+                };
+                TaskType::Error { timeout_ms, error_type }
+            },
+            TaskTypeRequest::Custom { custom_name, timeout_ms, failure_rate } => {
+                TaskType::Custom {
+                    name: custom_name,
+                    timeout_ms,
+                    failure_rate,
+                }
+            },
+        }
+    }
 }
 
 // API Endpoints
@@ -32,19 +79,26 @@ async fn create_task(
     data: web::Data<AppState>,
     req: web::Json<CreateTaskRequest>,
 ) -> Result<impl Responder> {
+    let task_type = req.task_type.clone().to_task_type();
+    let task_name = if req.name.is_empty() {
+        task_type.get_name()
+    } else {
+        req.name.clone()
+    };
+
     let task_id = data
         .task_manager
         .send(CreateTask {
-            name: req.name.clone(),
+            name: task_name.clone(),
             message: req.message.clone(),
-            task_type: req.task_type.clone(),
+            task_type,
         })
         .await
         .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to create task"))?;
 
     let response = TaskCreateResponse {
         id: task_id,
-        name: req.name.clone(),
+        name: task_name,
         status: TaskStatus::InProgress,
         created_at: chrono::Utc::now(),
     };

@@ -3,7 +3,7 @@ use actix::Actor;
 
 #[test]
 fn test_task_actor_creation() {
-    let task = TaskActor::new("Test Task".to_string(), "Test message".to_string());
+    let task = TaskActor::new("Test Task".to_string(), "Test message".to_string(), 5000);
 
     assert_eq!(task.metadata.name, "Test Task");
     assert_eq!(task.metadata.message, "Test message");
@@ -15,8 +15,8 @@ fn test_task_actor_creation() {
 
 #[test]
 fn test_task_uuid_uniqueness() {
-    let task1 = TaskActor::new("Task 1".to_string(), "Message 1".to_string());
-    let task2 = TaskActor::new("Task 2".to_string(), "Message 2".to_string());
+    let task1 = TaskActor::new("Task 1".to_string(), "Message 1".to_string(), 5000);
+    let task2 = TaskActor::new("Task 2".to_string(), "Message 2".to_string(), 5000);
 
     // Each task should have a unique ID
     assert_ne!(task1.metadata.id, task2.metadata.id);
@@ -24,7 +24,7 @@ fn test_task_uuid_uniqueness() {
 
 #[actix_rt::test]
 async fn test_task_status_query() {
-    let task = TaskActor::new("Query Test".to_string(), "Query message".to_string());
+    let task = TaskActor::new("Query Test".to_string(), "Query message".to_string(), 5000);
     let addr = task.start();
 
     let status = addr.send(GetTaskStatus).await.unwrap();
@@ -36,7 +36,7 @@ async fn test_task_status_query() {
 
 #[actix_rt::test]
 async fn test_task_metadata_update_on_completion() {
-    let mut task = TaskActor::new("Metadata Test".to_string(), "Test message".to_string());
+    let mut task = TaskActor::new("Metadata Test".to_string(), "Test message".to_string(), 5000);
 
     // Simulate completion
     task.metadata.status = TaskStatus::Completed;
@@ -51,7 +51,7 @@ async fn test_task_metadata_update_on_completion() {
 
 #[actix_rt::test]
 async fn test_task_metadata_update_on_error() {
-    let mut task = TaskActor::new("Error Metadata Test".to_string(), "Test message".to_string());
+    let mut task = TaskActor::new("Error Metadata Test".to_string(), "Test message".to_string(), 5000);
 
     // Simulate error
     task.metadata.status = TaskStatus::Error;

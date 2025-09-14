@@ -7,7 +7,7 @@ fn test_create_task_message_serialization() {
     let msg = CreateTask {
         name: "Test Task".to_string(),
         message: "Test message".to_string(),
-        task_type: TaskType::Quick,
+        task_type: TaskType::Quick { timeout_ms: None },
     };
 
     let json = serde_json::to_string(&msg).unwrap();
@@ -19,7 +19,11 @@ fn test_create_task_message_serialization() {
 
 #[test]
 fn test_task_type_serialization() {
-    let types = vec![TaskType::Quick, TaskType::Long, TaskType::Error];
+    let types = vec![
+        TaskType::Quick { timeout_ms: None },
+        TaskType::Long { timeout_ms: None },
+        TaskType::Error { timeout_ms: None, error_type: ErrorType::Immediate }
+    ];
 
     for task_type in types {
         let json = serde_json::to_string(&task_type).unwrap();
@@ -114,6 +118,10 @@ fn test_task_list_response_serialization() {
         finished_at: Some(chrono::Utc::now()),
         result: Some("Success".to_string()),
         error: None,
+        timeout_ms: 5000,
+        actual_duration_ms: Some(1000),
+        cancelled_at: None,
+        timeout_at: None,
     };
 
     let response = TaskListResponse {

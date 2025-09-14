@@ -13,6 +13,10 @@ fn test_task_metadata_serialization() {
         finished_at: Some(Utc::now()),
         result: Some("Success".to_string()),
         error: None,
+        timeout_ms: 5000,
+        actual_duration_ms: Some(1000),
+        cancelled_at: None,
+        timeout_at: None,
     };
 
     // Test JSON serialization
