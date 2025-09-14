@@ -146,3 +146,4 @@ impl Handler<GetTaskStatus> for TaskActor {
         MessageResult(self.metadata.clone())
     }
 }
+
