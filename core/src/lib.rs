@@ -58,31 +58,53 @@ impl Actor for TaskActor {
     }
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct StartTask {
+    #[serde(with = "duration_serde")]
     pub duration: Duration,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct CompleteTask {
     pub result: String,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct ErrorTask {
     pub error: String,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct CancelTask;
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "TaskMetadata")]
 pub struct GetTaskStatus;
+
+// Duration serialization helper
+mod duration_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        duration.as_secs().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(Duration::from_secs(secs))
+    }
+}
 
 impl Handler<StartTask> for TaskActor {
     type Result = ();
@@ -187,7 +209,7 @@ impl Actor for TaskManagerActor {
     }
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "Uuid")]
 pub struct CreateTask {
     pub name: String,
@@ -202,27 +224,76 @@ pub enum TaskType {
     Error,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "Vec<TaskMetadata>")]
 pub struct GetAllTasks;
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "Option<TaskMetadata>")]
 pub struct GetTask {
     pub id: Uuid,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "bool")]
 pub struct CancelTaskById {
     pub id: Uuid,
 }
 
-#[derive(Message)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct TaskFinished {
     pub id: Uuid,
     pub metadata: TaskMetadata,
+}
+
+// API Response Types for Web Interface
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResponse<T> {
+    pub success: bool,
+    pub data: Option<T>,
+    pub error: Option<String>,
+}
+
+impl<T> ApiResponse<T> {
+    pub fn success(data: T) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn error(message: String) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(message),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskCreateResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub status: TaskStatus,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskListResponse {
+    pub tasks: Vec<TaskMetadata>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStatusUpdate {
+    pub id: Uuid,
+    pub status: TaskStatus,
+    pub updated_at: DateTime<Utc>,
+    pub result: Option<String>,
+    pub error: Option<String>,
 }
 
 impl Handler<CreateTask> for TaskManagerActor {
