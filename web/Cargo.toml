@@ -10,4 +10,12 @@ path = "src/main.rs"
 [dependencies]
 task-core = { path = "../core" }
 actix-web = "4.11.0"
+actix = "0.13.5"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+tokio = { version = "1.0", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+env_logger = "0.10"
+futures = "0.3"
+async-stream = "0.3"
