@@ -3,8 +3,9 @@ use actix_web::{
     delete, get, http::header, middleware::Logger, post, web, App, HttpResponse, HttpServer,
     Responder, Result,
 };
+use actix_files as fs;
+use serde::Deserialize;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 use task_core::*;
 use uuid::Uuid;
 
@@ -178,36 +179,30 @@ async fn health_check() -> impl Responder {
 
 #[get("/tasks/stream")]
 async fn task_stream(data: web::Data<AppState>) -> Result<impl Responder> {
-    let stream = async_stream::stream! {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+    // For now, return a simple response to test basic functionality
+    let tasks = data
+        .task_manager
+        .send(GetAllTasks)
+        .await
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Failed to get tasks"))?;
 
-        loop {
-            interval.tick().await;
-
-            // Get current tasks from manager
-            if let Ok(tasks) = data.task_manager.send(GetAllTasks).await {
-                let json = serde_json::to_string(&serde_json::json!({
-                    "type": "task_list_update",
-                    "data": TaskListResponse {
-                        tasks: tasks.clone(),
-                        total: tasks.len()
-                    },
-                    "timestamp": chrono::Utc::now()
-                })).unwrap_or_else(|_| "{}".to_string());
-
-                yield Ok::<_, actix_web::Error>(
-                    web::Bytes::from(format!("data: {}\n\n", json))
-                );
-            }
-        }
+    let response = TaskListResponse {
+        total: tasks.len(),
+        tasks,
     };
+
+    let json = serde_json::json!({
+        "type": "task_list_update",
+        "data": response,
+        "timestamp": chrono::Utc::now()
+    });
 
     Ok(HttpResponse::Ok()
         .insert_header((header::CONTENT_TYPE, "text/event-stream"))
         .insert_header((header::CACHE_CONTROL, "no-cache"))
         .insert_header((header::CONNECTION, "keep-alive"))
         .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-        .streaming(stream))
+        .body(format!("data: {}\n\n", json)))
 }
 
 #[actix_web::main]
@@ -227,13 +222,18 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(app_state.clone())
             .wrap(Logger::default())
-            .service(index)
-            .service(create_task)
-            .service(get_all_tasks)
-            .service(get_task)
-            .service(cancel_task)
-            .service(health_check)
-            .service(task_stream)
+            .service(
+                web::scope("/api")
+                    .service(index)
+                    .service(create_task)
+                    .service(get_all_tasks)
+                    .service(get_task)
+                    .service(cancel_task)
+                    .service(health_check)
+                    // .service(task_stream) // Temporarily disabled
+            )
+            .service(fs::Files::new("/", "./web/static")
+                .index_file("index.html"))
     })
     .bind("127.0.0.1:3000")?
     .run()

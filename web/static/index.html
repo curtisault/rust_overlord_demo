@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Overlord Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="dashboard">
+        <header class="dashboard-header">
+            <h1><i class="fas fa-tasks"></i> Task Overlord Dashboard</h1>
+            <div class="task-controls">
+                <button id="quick-task-btn" class="btn btn-quick">
+                    <i class="fas fa-bolt"></i> Quick Task (2s)
+                </button>
+                <button id="long-task-btn" class="btn btn-long">
+                    <i class="fas fa-clock"></i> Long Task (10s)
+                </button>
+                <button id="error-task-btn" class="btn btn-error">
+                    <i class="fas fa-exclamation-triangle"></i> Error Task
+                </button>
+            </div>
+        </header>
+
+        <main class="dashboard-main">
+            <div class="task-columns">
+                <div class="task-column">
+                    <div class="column-header">
+                        <h2><i class="fas fa-spinner fa-spin"></i> In Progress</h2>
+                        <span class="task-count" id="in-progress-count">0</span>
+                    </div>
+                    <div class="task-list" id="in-progress-tasks"></div>
+                </div>
+
+                <div class="task-column">
+                    <div class="column-header">
+                        <h2><i class="fas fa-check-circle"></i> Completed</h2>
+                        <span class="task-count" id="completed-count">0</span>
+                    </div>
+                    <div class="task-list" id="completed-tasks"></div>
+                </div>
+
+                <div class="task-column">
+                    <div class="column-header">
+                        <h2><i class="fas fa-times-circle"></i> Error</h2>
+                        <span class="task-count" id="error-count">0</span>
+                    </div>
+                    <div class="task-list" id="error-tasks"></div>
+                </div>
+            </div>
+        </main>
+
+        <div class="connection-status">
+            <div id="connection-indicator" class="offline">
+                <i class="fas fa-circle"></i>
+                <span>Disconnected</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Creation Modal -->
+    <div id="task-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Create Task</h3>
+                <button id="modal-close" class="modal-close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="task-form">
+                <div class="form-group">
+                    <label for="task-name">Task Name (optional):</label>
+                    <input type="text" id="task-name" placeholder="Leave empty for auto-generated name">
+                </div>
+                <div class="form-group">
+                    <label for="task-message">Message:</label>
+                    <input type="text" id="task-message" placeholder="Enter task message" required>
+                </div>
+                <div id="task-options"></div>
+                <div class="form-actions">
+                    <button type="button" id="modal-cancel" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
