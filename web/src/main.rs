@@ -252,7 +252,7 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = web::Data::new(AppState { task_manager });
 
-    println!("📡 Server starting on http://127.0.0.1:3000");
+    println!("📡 Server starting on http://127.0.0.1:3333");
 
     HttpServer::new(move || {
         App::new()
@@ -273,7 +273,7 @@ async fn main() -> std::io::Result<()> {
             .service(fs::Files::new("/", "./web/static")
                 .index_file("index.html"))
     })
-    .bind("127.0.0.1:3000")?
+    .bind("127.0.0.1:3333")?
     .run()
     .await
 }
