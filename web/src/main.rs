@@ -9,9 +9,11 @@ use futures::StreamExt;
 use task_core::*;
 use uuid::Uuid;
 
+mod liveview;
+
 // Application state
-struct AppState {
-    task_manager: actix::Addr<TaskManagerActor>,
+pub struct AppState {
+    pub task_manager: actix::Addr<TaskManagerActor>,
 }
 
 // Request/Response types
@@ -205,6 +207,40 @@ async fn task_stream(data: web::Data<AppState>) -> Result<impl Responder> {
         .body(format!("data: {}\n\n", json)))
 }
 
+async fn liveview_page() -> impl Responder {
+    HttpResponse::Ok()
+        .content_type("text/html")
+        .body(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LiveView Redirect</title>
+    <script>
+        // Simple redirect to establish WebSocket connection
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(protocol + '//' + location.host + '/ws/');
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'html_update') {
+                document.open();
+                document.write(data.html);
+                document.close();
+            }
+        };
+
+        ws.onerror = function() {
+            document.body.innerHTML = '<h1>Connecting to LiveView...</h1>';
+        };
+    </script>
+</head>
+<body>
+    <h1>Initializing LiveView...</h1>
+</body>
+</html>
+        "#)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init();
@@ -232,6 +268,8 @@ async fn main() -> std::io::Result<()> {
                     .service(health_check)
                     // .service(task_stream) // Temporarily disabled
             )
+            .route("/ws/", web::get().to(liveview::websocket_handler))
+            .route("/liveview", web::get().to(liveview_page))
             .service(fs::Files::new("/", "./web/static")
                 .index_file("index.html"))
     })

@@ -1,0 +1,507 @@
+use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix_web::web;
+use actix_web_actors::ws;
+use maud::{html, Markup, PreEscaped, DOCTYPE};
+use serde_json;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use task_core::*;
+use uuid::Uuid;
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone)]
+pub struct LiveViewState {
+    pub tasks: Vec<TaskMetadata>,
+}
+
+impl Default for LiveViewState {
+    fn default() -> Self {
+        Self { tasks: Vec::new() }
+    }
+}
+
+pub struct LiveViewSession {
+    id: Uuid,
+    hb: Instant,
+    task_manager: Addr<TaskManagerActor>,
+    state: LiveViewState,
+    last_html: String,
+}
+
+impl LiveViewSession {
+    pub fn new(task_manager: Addr<TaskManagerActor>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            hb: Instant::now(),
+            task_manager,
+            state: LiveViewState::default(),
+            last_html: String::new(),
+        }
+    }
+
+    fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                println!("LiveView client heartbeat failed, disconnecting!");
+                ctx.stop();
+                return;
+            }
+
+            ctx.ping(b"");
+        });
+    }
+
+    fn render_page(&self) -> Markup {
+        html! {
+            (DOCTYPE)
+            html lang="en" {
+                head {
+                    meta charset="UTF-8";
+                    meta name="viewport" content="width=device-width, initial-scale=1.0";
+                    title { "Task Overlord LiveView" }
+                    style {
+                        (PreEscaped(r#"
+                            * { margin: 0; padding: 0; box-sizing: border-box; }
+                            body {
+                                font-family: 'Segoe UI', system-ui, sans-serif;
+                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                min-height: 100vh;
+                                color: #333;
+                            }
+                            .container {
+                                max-width: 1200px;
+                                margin: 0 auto;
+                                padding: 20px;
+                            }
+                            .header {
+                                background: rgba(255, 255, 255, 0.95);
+                                border-radius: 15px;
+                                padding: 30px;
+                                margin-bottom: 30px;
+                                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                                text-align: center;
+                            }
+                            .header h1 {
+                                font-size: 2.5rem;
+                                margin-bottom: 20px;
+                                color: #2d3748;
+                            }
+                            .controls {
+                                display: flex;
+                                gap: 15px;
+                                justify-content: center;
+                                flex-wrap: wrap;
+                            }
+                            .btn {
+                                padding: 12px 24px;
+                                border: none;
+                                border-radius: 8px;
+                                font-size: 16px;
+                                cursor: pointer;
+                                transition: all 0.3s ease;
+                                font-weight: 600;
+                                text-transform: uppercase;
+                                letter-spacing: 0.5px;
+                            }
+                            .btn:hover { transform: translateY(-2px); }
+                            .btn-quick {
+                                background: linear-gradient(45deg, #4facfe, #00f2fe);
+                                color: white;
+                            }
+                            .btn-long {
+                                background: linear-gradient(45deg, #fa709a, #fee140);
+                                color: white;
+                            }
+                            .btn-error {
+                                background: linear-gradient(45deg, #ff6b6b, #ffa500);
+                                color: white;
+                            }
+                            .task-grid {
+                                display: grid;
+                                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                                gap: 25px;
+                            }
+                            .task-column {
+                                background: rgba(255, 255, 255, 0.95);
+                                border-radius: 15px;
+                                padding: 25px;
+                                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                            }
+                            .column-header {
+                                display: flex;
+                                align-items: center;
+                                justify-content: space-between;
+                                margin-bottom: 20px;
+                                padding-bottom: 15px;
+                                border-bottom: 2px solid #e2e8f0;
+                            }
+                            .column-title {
+                                font-size: 1.3rem;
+                                font-weight: 700;
+                            }
+                            .status-in-progress { color: #3182ce; }
+                            .status-completed { color: #38a169; }
+                            .status-error { color: #e53e3e; }
+                            .task-count {
+                                background: #4a5568;
+                                color: white;
+                                padding: 8px 12px;
+                                border-radius: 20px;
+                                font-weight: 700;
+                                min-width: 40px;
+                                text-align: center;
+                            }
+                            .task-card {
+                                background: #f7fafc;
+                                border-radius: 10px;
+                                padding: 20px;
+                                margin-bottom: 15px;
+                                border-left: 4px solid #e2e8f0;
+                                transition: all 0.3s ease;
+                            }
+                            .task-card:hover {
+                                transform: translateY(-2px);
+                                box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                            }
+                            .task-card.in-progress { border-left-color: #3182ce; }
+                            .task-card.completed { border-left-color: #38a169; }
+                            .task-card.error { border-left-color: #e53e3e; }
+                            .task-name {
+                                font-weight: 700;
+                                margin-bottom: 8px;
+                                font-size: 1.1rem;
+                            }
+                            .task-message {
+                                color: #718096;
+                                margin-bottom: 12px;
+                                font-size: 0.9rem;
+                            }
+                            .task-meta {
+                                font-size: 0.8rem;
+                                color: #a0aec0;
+                            }
+                            .task-actions {
+                                margin-top: 15px;
+                                display: flex;
+                                gap: 10px;
+                            }
+                            .btn-cancel {
+                                background: #e53e3e;
+                                color: white;
+                                padding: 6px 12px;
+                                border: none;
+                                border-radius: 6px;
+                                cursor: pointer;
+                                font-size: 0.8rem;
+                            }
+                            .empty-state {
+                                text-align: center;
+                                color: #a0aec0;
+                                padding: 40px;
+                                font-style: italic;
+                            }
+                        "#))
+                    }
+                }
+                body {
+                    div class="container" {
+                        div class="header" {
+                            h1 { "🎯 Task Overlord LiveView" }
+                            div class="controls" {
+                                button class="btn btn-quick" onclick="createTask('quick')" { "⚡ Quick Task (2s)" }
+                                button class="btn btn-long" onclick="createTask('long')" { "⏰ Long Task (10s)" }
+                                button class="btn btn-error" onclick="createTask('error')" { "💥 Error Task" }
+                            }
+                        }
+                        div class="task-grid" {
+                            (self.render_task_column("In Progress", &self.get_tasks_by_status(TaskStatus::InProgress), "in-progress"))
+                            (self.render_task_column("Completed", &self.get_tasks_by_status(TaskStatus::Completed), "completed"))
+                            (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
+                        }
+                    }
+                    script {
+                        (PreEscaped(r#"
+                            let ws = null;
+
+                            function connect() {
+                                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                                ws = new WebSocket(protocol + '//' + location.host + '/ws/');
+
+                                ws.onmessage = function(event) {
+                                    const data = JSON.parse(event.data);
+                                    if (data.type === 'html_update') {
+                                        document.documentElement.innerHTML = data.html;
+                                        // Reconnect after DOM update
+                                        setTimeout(connect, 100);
+                                    }
+                                };
+
+                                ws.onclose = function() {
+                                    setTimeout(connect, 1000);
+                                };
+
+                                ws.onerror = function() {
+                                    setTimeout(connect, 1000);
+                                };
+                            }
+
+                            function createTask(taskType) {
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({
+                                        type: 'create_task',
+                                        task_type: taskType
+                                    }));
+                                }
+                            }
+
+                            function cancelTask(taskId) {
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({
+                                        type: 'cancel_task',
+                                        task_id: taskId
+                                    }));
+                                }
+                            }
+
+                            connect();
+
+                            // Auto-refresh every 2 seconds
+                            setInterval(() => {
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'refresh' }));
+                                }
+                            }, 2000);
+                        "#))
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_task_column(&self, title: &str, tasks: &[TaskMetadata], status_class: &str) -> Markup {
+        html! {
+            div class="task-column" {
+                div class="column-header" {
+                    div class={"column-title status-" (status_class)} { (title) }
+                    div class="task-count" { (tasks.len()) }
+                }
+                div class="task-list" {
+                    @if tasks.is_empty() {
+                        div class="empty-state" { "No tasks yet..." }
+                    } @else {
+                        @for task in tasks {
+                            (self.render_task_card(task))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_task_card(&self, task: &TaskMetadata) -> Markup {
+        let status_class = match task.status {
+            TaskStatus::InProgress => "in-progress",
+            TaskStatus::Completed => "completed",
+            TaskStatus::Error => "error",
+        };
+
+        html! {
+            div class={"task-card " (status_class)} {
+                div class="task-name" { (task.name) }
+                div class="task-message" { (task.message) }
+                div class="task-meta" {
+                    div { "Started: " (task.started_at.format("%H:%M:%S")) }
+                    @if let Some(finished_at) = task.finished_at {
+                        div { "Finished: " (finished_at.format("%H:%M:%S")) }
+                    }
+                    @if let Some(duration) = task.actual_duration_ms {
+                        div { "Duration: " (duration) "ms" }
+                    }
+                    @if let Some(result) = &task.result {
+                        div { "Result: " (result) }
+                    }
+                    @if let Some(error) = &task.error {
+                        div style="color: #e53e3e;" { "Error: " (error) }
+                    }
+                }
+                @if task.status == TaskStatus::InProgress {
+                    div class="task-actions" {
+                        button class="btn-cancel" onclick={"cancelTask('" (task.id) "')"} { "Cancel" }
+                    }
+                }
+            }
+        }
+    }
+
+    fn get_tasks_by_status(&self, status: TaskStatus) -> Vec<TaskMetadata> {
+        self.state.tasks
+            .iter()
+            .filter(|task| task.status == status)
+            .cloned()
+            .collect()
+    }
+
+    async fn update_tasks(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        match self.task_manager.send(GetAllTasks).await {
+            Ok(tasks) => {
+                self.state.tasks = tasks;
+                self.send_html_update(ctx);
+            }
+            Err(e) => {
+                println!("Failed to get tasks: {}", e);
+            }
+        }
+    }
+
+    fn send_html_update(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        let new_html = self.render_page().into_string();
+
+        // Simple diff check - in a real implementation you'd use proper DOM diffing
+        if new_html != self.last_html {
+            let message = serde_json::json!({
+                "type": "html_update",
+                "html": new_html
+            });
+
+            ctx.text(message.to_string());
+            self.last_html = new_html;
+        }
+    }
+}
+
+impl Actor for LiveViewSession {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        println!("LiveView session started: {}", self.id);
+        self.hb(ctx);
+
+        // Send initial HTML
+        let initial_html = self.render_page().into_string();
+        let message = serde_json::json!({
+            "type": "html_update",
+            "html": initial_html
+        });
+        ctx.text(message.to_string());
+        self.last_html = initial_html;
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        println!("LiveView session stopped: {}", self.id);
+    }
+}
+
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
+            Ok(ws::Message::Text(text)) => {
+                self.hb = Instant::now();
+                println!("Received WebSocket message: {}", text);
+
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
+                    match data.get("type").and_then(|t| t.as_str()) {
+                        Some("create_task") => {
+                            if let Some(task_type_str) = data.get("task_type").and_then(|t| t.as_str()) {
+                                let task_type = match task_type_str {
+                                    "quick" => TaskType::Quick { timeout_ms: None },
+                                    "long" => TaskType::Long { timeout_ms: None },
+                                    "error" => TaskType::Error {
+                                        timeout_ms: None,
+                                        error_type: ErrorType::Random
+                                    },
+                                    _ => TaskType::Quick { timeout_ms: None },
+                                };
+
+                                println!("Creating task: {}", task_type_str);
+                                let task_manager = self.task_manager.clone();
+                                let ctx_addr = ctx.address();
+
+                                actix::spawn(async move {
+                                    match task_manager.send(CreateTask {
+                                        name: String::new(),
+                                        message: "LiveView task".to_string(),
+                                        task_type,
+                                    }).await {
+                                        Ok(task_id) => {
+                                            println!("Task created with ID: {}", task_id);
+                                            // Trigger a refresh after task creation
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                            if let Ok(tasks) = task_manager.send(GetAllTasks).await {
+                                                let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            println!("Failed to create task: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        Some("cancel_task") => {
+                            if let Some(task_id_str) = data.get("task_id").and_then(|t| t.as_str()) {
+                                if let Ok(task_id) = Uuid::parse_str(task_id_str) {
+                                    let task_manager = self.task_manager.clone();
+
+                                    actix::spawn(async move {
+                                        let _ = task_manager.send(CancelTaskById { id: task_id }).await;
+                                    });
+                                }
+                            }
+                        }
+                        Some("refresh") => {
+                            let ctx_addr = ctx.address();
+                            let task_manager = self.task_manager.clone();
+                            let session_id = self.id;
+
+                            actix::spawn(async move {
+                                if let Ok(tasks) = task_manager.send(GetAllTasks).await {
+                                    let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                }
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(ws::Message::Binary(_)) => println!("Unexpected binary message"),
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            _ => ctx.stop(),
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct UpdateTasks {
+    pub tasks: Vec<TaskMetadata>,
+}
+
+impl Handler<UpdateTasks> for LiveViewSession {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateTasks, ctx: &mut Self::Context) {
+        self.state.tasks = msg.tasks;
+        self.send_html_update(ctx);
+    }
+}
+
+pub async fn websocket_handler(
+    req: actix_web::HttpRequest,
+    stream: web::Payload,
+    data: web::Data<crate::AppState>,
+) -> Result<actix_web::HttpResponse, actix_web::Error> {
+    let session = LiveViewSession::new(data.task_manager.clone());
+    ws::start(session, &req, stream)
+}
