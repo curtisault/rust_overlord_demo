@@ -455,7 +455,10 @@ impl ApiError {
     pub fn task_already_completed(task_id: &str) -> Self {
         Self {
             error_type: ApiErrorType::TaskAlreadyCompleted,
-            message: format!("Task '{}' is already completed and cannot be cancelled", task_id),
+            message: format!(
+                "Task '{}' is already completed and cannot be cancelled",
+                task_id
+            ),
             details: Some(serde_json::json!({
                 "task_id": task_id,
                 "allowed_statuses": ["InProgress"]

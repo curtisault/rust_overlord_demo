@@ -1,9 +1,9 @@
 use actix::Actor;
+use actix_files as fs;
 use actix_web::{
     delete, get, http::header, middleware::Logger, post, web, App, HttpResponse, HttpServer,
     Responder, Result,
 };
-use actix_files as fs;
 use serde::Deserialize;
 use task_core::*;
 use uuid::Uuid;
@@ -53,8 +53,13 @@ impl CreateTaskRequest {
 
         // Validate task type specific constraints
         match &self.task_type {
-            TaskTypeRequest::Custom { timeout_ms, failure_rate, .. } => {
-                if *timeout_ms > 300000 { // 5 minutes max
+            TaskTypeRequest::Custom {
+                timeout_ms,
+                failure_rate,
+                ..
+            } => {
+                if *timeout_ms > 300000 {
+                    // 5 minutes max
                     return Err(ApiError::validation_error(
                         "Custom task timeout cannot exceed 5 minutes (300000ms)".to_string(),
                         Some(serde_json::json!({
@@ -176,7 +181,7 @@ async fn create_task(
         Ok(id) => id,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to create task - internal service error".to_string()
+                "Failed to create task - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -198,7 +203,7 @@ async fn get_all_tasks(data: web::Data<AppState>) -> Result<impl Responder> {
         Ok(tasks) => tasks,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to retrieve tasks - internal service error".to_string()
+                "Failed to retrieve tasks - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -220,7 +225,7 @@ async fn get_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result<im
         Ok(task) => task,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to retrieve task - internal service error".to_string()
+                "Failed to retrieve task - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -248,7 +253,7 @@ async fn cancel_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result
         }
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to retrieve task status - internal service error".to_string()
+                "Failed to retrieve task status - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -265,7 +270,7 @@ async fn cancel_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result
         Ok(result) => result,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to cancel task - internal service error".to_string()
+                "Failed to cancel task - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -275,9 +280,7 @@ async fn cancel_task(data: web::Data<AppState>, path: web::Path<Uuid>) -> Result
         Ok(HttpResponse::Ok().json(ApiResponse::success("Task cancelled successfully")))
     } else {
         // This shouldn't happen given our checks, but handle it gracefully
-        let error = ApiError::internal_error(
-            "Task cancellation failed unexpectedly".to_string()
-        );
+        let error = ApiError::internal_error("Task cancellation failed unexpectedly".to_string());
         Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)))
     }
 }
@@ -313,7 +316,7 @@ async fn get_websocket_messages(
         Ok(messages) => messages,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to retrieve WebSocket messages - internal service error".to_string()
+                "Failed to retrieve WebSocket messages - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
@@ -328,16 +331,18 @@ async fn clear_websocket_messages(data: web::Data<AppState>) -> Result<impl Resp
         Ok(count) => count,
         Err(_) => {
             let error = ApiError::internal_error(
-                "Failed to clear WebSocket messages - internal service error".to_string()
+                "Failed to clear WebSocket messages - internal service error".to_string(),
             );
             return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
         }
     };
 
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-        "cleared_count": cleared_count,
-        "message": format!("Cleared {} WebSocket messages", cleared_count)
-    }))))
+    Ok(
+        HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+            "cleared_count": cleared_count,
+            "message": format!("Cleared {} WebSocket messages", cleared_count)
+        }))),
+    )
 }
 
 #[get("/tasks/stream")]
@@ -371,14 +376,15 @@ async fn task_stream(data: web::Data<AppState>) -> Result<impl Responder> {
 async fn liveview_page() -> impl Responder {
     let file_path = "web/static/redirect.html";
     match std::fs::read_to_string(file_path) {
-        Ok(content) => HttpResponse::Ok()
-            .content_type("text/html")
-            .body(content),
+        Ok(content) => HttpResponse::Ok().content_type("text/html").body(content),
         Err(e) => {
             eprintln!("Error reading file '{}': {}", file_path, e);
             eprintln!("Current working directory: {:?}", std::env::current_dir());
-            HttpResponse::InternalServerError()
-                .body(format!("Error loading LiveView redirect page: {} (cwd: {:?})", e, std::env::current_dir()))
+            HttpResponse::InternalServerError().body(format!(
+                "Error loading LiveView redirect page: {} (cwd: {:?})",
+                e,
+                std::env::current_dir()
+            ))
         }
     }
 }
@@ -653,7 +659,10 @@ async fn main() -> std::io::Result<()> {
     let task_manager = TaskManagerActor::new().start();
     let ws_monitor = WebSocketMonitorActor::new().start();
 
-    let app_state = web::Data::new(AppState { task_manager, ws_monitor });
+    let app_state = web::Data::new(AppState {
+        task_manager,
+        ws_monitor,
+    });
 
     println!("📡 Server starting on http://127.0.0.1:3333");
 
@@ -670,8 +679,7 @@ async fn main() -> std::io::Result<()> {
                     .service(cancel_task)
                     .service(health_check)
                     .service(get_websocket_messages)
-                    .service(clear_websocket_messages)
-                    // .service(task_stream) // Temporarily disabled
+                    .service(clear_websocket_messages), // .service(task_stream) // Temporarily disabled
             )
             .route("/", web::get().to(liveview_page))
             .route("/ws/", web::get().to(liveview::websocket_handler))

@@ -1,3 +1,4 @@
+use crate::shared_header;
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, StreamHandler};
 use actix_web::web;
 use actix_web_actors::ws;
@@ -6,7 +7,6 @@ use serde_json;
 use std::time::{Duration, Instant};
 use task_core::*;
 use uuid::Uuid;
-use crate::shared_header;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,7 +32,10 @@ pub struct LiveViewSession {
 }
 
 impl LiveViewSession {
-    pub fn new(task_manager: Addr<TaskManagerActor>, ws_monitor: Addr<WebSocketMonitorActor>) -> Self {
+    pub fn new(
+        task_manager: Addr<TaskManagerActor>,
+        ws_monitor: Addr<WebSocketMonitorActor>,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             hb: Instant::now(),
@@ -532,13 +535,15 @@ impl LiveViewSession {
             let content_for_log = message_str.clone();
             let size_bytes = message_str.len();
             actix::spawn(async move {
-                let _ = ws_monitor.send(LogWebSocketMessage {
-                    session_id,
-                    direction: WsMessageDirection::Outgoing,
-                    message_type: "task_grid_update".to_string(),
-                    content: content_for_log,
-                    size_bytes,
-                }).await;
+                let _ = ws_monitor
+                    .send(LogWebSocketMessage {
+                        session_id,
+                        direction: WsMessageDirection::Outgoing,
+                        message_type: "task_grid_update".to_string(),
+                        content: content_for_log,
+                        size_bytes,
+                    })
+                    .await;
             });
 
             ctx.text(message_str);
@@ -613,13 +618,15 @@ impl Actor for LiveViewSession {
         let content_for_log = message_str.clone();
         let size_bytes = message_str.len();
         actix::spawn(async move {
-            let _ = ws_monitor.send(LogWebSocketMessage {
-                session_id,
-                direction: WsMessageDirection::Outgoing,
-                message_type: "full_page_load".to_string(),
-                content: content_for_log,
-                size_bytes,
-            }).await;
+            let _ = ws_monitor
+                .send(LogWebSocketMessage {
+                    session_id,
+                    direction: WsMessageDirection::Outgoing,
+                    message_type: "full_page_load".to_string(),
+                    content: content_for_log,
+                    size_bytes,
+                })
+                .await;
         });
 
         ctx.text(message_str);
@@ -664,13 +671,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                     let size_bytes = text.len();
                     let msg_type_string = msg_type.to_string();
                     actix::spawn(async move {
-                        let _ = ws_monitor.send(LogWebSocketMessage {
-                            session_id,
-                            direction: WsMessageDirection::Incoming,
-                            message_type: msg_type_string,
-                            content: text_string,
-                            size_bytes,
-                        }).await;
+                        let _ = ws_monitor
+                            .send(LogWebSocketMessage {
+                                session_id,
+                                direction: WsMessageDirection::Incoming,
+                                message_type: msg_type_string,
+                                content: text_string,
+                                size_bytes,
+                            })
+                            .await;
                     });
 
                     match msg_type {
@@ -679,12 +688,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                 data.get("task_type").and_then(|t| t.as_str())
                             {
                                 // Extract custom parameters for custom tasks
-                                let task_name = data.get("name")
+                                let task_name = data
+                                    .get("name")
                                     .and_then(|n| n.as_str())
                                     .unwrap_or("")
                                     .to_string();
 
-                                let task_message = data.get("message")
+                                let task_message = data
+                                    .get("message")
                                     .and_then(|m| m.as_str())
                                     .unwrap_or("LiveView task")
                                     .to_string();
@@ -697,23 +708,32 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                         error_type: ErrorType::Random,
                                     },
                                     "custom" => {
-                                        let timeout_ms = data.get("custom_timeout")
+                                        let timeout_ms = data
+                                            .get("custom_timeout")
                                             .and_then(|t| t.as_u64())
                                             .unwrap_or(5000);
-                                        let failure_rate = data.get("custom_failure_rate")
+                                        let failure_rate = data
+                                            .get("custom_failure_rate")
                                             .and_then(|f| f.as_f64())
                                             .map(|f| f as f32);
 
                                         TaskType::Custom {
-                                            name: if task_name.is_empty() { "Custom Task".to_string() } else { task_name.clone() },
+                                            name: if task_name.is_empty() {
+                                                "Custom Task".to_string()
+                                            } else {
+                                                task_name.clone()
+                                            },
                                             timeout_ms,
                                             failure_rate,
                                         }
-                                    },
+                                    }
                                     _ => TaskType::Quick { timeout_ms: None },
                                 };
 
-                                println!("🚀 Session {} creating task: {} (name: {}, message: {})", self.id, task_type_str, task_name, task_message);
+                                println!(
+                                    "🚀 Session {} creating task: {} (name: {}, message: {})",
+                                    self.id, task_type_str, task_name, task_message
+                                );
                                 let task_manager = self.task_manager.clone();
                                 let ctx_addr = ctx.address();
                                 let session_id = self.id;
@@ -778,14 +798,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                                     session_id, canceled
                                                 );
                                                 // Trigger a refresh after task cancellation
-                                                tokio::time::sleep(tokio::time::Duration::from_millis(
-                                                    100,
-                                                ))
+                                                tokio::time::sleep(
+                                                    tokio::time::Duration::from_millis(100),
+                                                )
                                                 .await;
-                                                if let Ok(tasks) = task_manager.send(GetAllTasks).await
+                                                if let Ok(tasks) =
+                                                    task_manager.send(GetAllTasks).await
                                                 {
                                                     println!("📋 Session {} refreshing with {} tasks after cancellation", session_id, tasks.len());
-                                                    let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                                    let _ =
+                                                        ctx_addr.send(UpdateTasks { tasks }).await;
                                                 }
                                             }
                                             Err(e) => {
