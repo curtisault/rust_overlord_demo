@@ -5,7 +5,6 @@ use actix_web::{
 };
 use actix_files as fs;
 use serde::Deserialize;
-use futures::StreamExt;
 use task_core::*;
 use uuid::Uuid;
 
@@ -222,7 +221,7 @@ async fn liveview_page() -> impl Responder {
 
         ws.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            if (data.type === 'html_update') {
+            if (data.type === 'full_page_load') {
                 document.open();
                 document.write(data.html);
                 document.close();

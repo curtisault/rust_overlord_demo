@@ -1,9 +1,8 @@
-use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message, StreamHandler};
+use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, StreamHandler};
 use actix_web::web;
 use actix_web_actors::ws;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use serde_json;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use task_core::*;
 use uuid::Uuid;
@@ -215,72 +214,24 @@ impl LiveViewSession {
                                 button class="btn btn-error" onclick="createTask('error')" { "💥 Error Task" }
                             }
                         }
-                        div class="task-grid" {
+                        div class="task-grid" id="task-grid" {
                             (self.render_task_column("In Progress", &self.get_tasks_by_status(TaskStatus::InProgress), "in-progress"))
                             (self.render_task_column("Completed", &self.get_tasks_by_status(TaskStatus::Completed), "completed"))
                             (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
                         }
                     }
-                    script {
-                        (PreEscaped(r#"
-                            let ws = null;
-
-                            function connect() {
-                                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-                                ws = new WebSocket(protocol + '//' + location.host + '/ws/');
-
-                                ws.onmessage = function(event) {
-                                    const data = JSON.parse(event.data);
-                                    if (data.type === 'html_update') {
-                                        document.documentElement.innerHTML = data.html;
-                                        // Reconnect after DOM update
-                                        setTimeout(connect, 100);
-                                    }
-                                };
-
-                                ws.onclose = function() {
-                                    setTimeout(connect, 1000);
-                                };
-
-                                ws.onerror = function() {
-                                    setTimeout(connect, 1000);
-                                };
-                            }
-
-                            function createTask(taskType) {
-                                if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({
-                                        type: 'create_task',
-                                        task_type: taskType
-                                    }));
-                                }
-                            }
-
-                            function cancelTask(taskId) {
-                                if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({
-                                        type: 'cancel_task',
-                                        task_id: taskId
-                                    }));
-                                }
-                            }
-
-                            connect();
-
-                            // Auto-refresh every 2 seconds
-                            setInterval(() => {
-                                if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({ type: 'refresh' }));
-                                }
-                            }, 2000);
-                        "#))
-                    }
+                    script src="/ws_connect.js" {}
                 }
             }
         }
     }
 
-    fn render_task_column(&self, title: &str, tasks: &[TaskMetadata], status_class: &str) -> Markup {
+    fn render_task_column(
+        &self,
+        title: &str,
+        tasks: &[TaskMetadata],
+        status_class: &str,
+    ) -> Markup {
         html! {
             div class="task-column" {
                 div class="column-header" {
@@ -336,7 +287,8 @@ impl LiveViewSession {
     }
 
     fn get_tasks_by_status(&self, status: TaskStatus) -> Vec<TaskMetadata> {
-        self.state.tasks
+        self.state
+            .tasks
             .iter()
             .filter(|task| task.status == status)
             .cloned()
@@ -355,18 +307,41 @@ impl LiveViewSession {
         }
     }
 
-    fn send_html_update(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
-        let new_html = self.render_page().into_string();
+    fn render_task_grid(&self) -> Markup {
+        html! {
+            (self.render_task_column("In Progress", &self.get_tasks_by_status(TaskStatus::InProgress), "in-progress"))
+            (self.render_task_column("Completed", &self.get_tasks_by_status(TaskStatus::Completed), "completed"))
+            (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
+        }
+    }
 
-        // Simple diff check - in a real implementation you'd use proper DOM diffing
-        if new_html != self.last_html {
+    fn send_html_update(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
+        let new_task_grid_html = self.render_task_grid().into_string();
+        println!(
+            "🔄 Session {} checking for updates: new={} chars, old={} chars",
+            self.id,
+            new_task_grid_html.len(),
+            self.last_html.len()
+        );
+
+        if new_task_grid_html != self.last_html {
+            println!(
+                "📤 Session {} sending task grid update ({} chars)",
+                self.id,
+                new_task_grid_html.len()
+            );
             let message = serde_json::json!({
-                "type": "html_update",
-                "html": new_html
+                "type": "task_grid_update",
+                "html": new_task_grid_html
             });
 
             ctx.text(message.to_string());
-            self.last_html = new_html;
+            self.last_html = new_task_grid_html;
+        } else {
+            println!(
+                "⏸️  Session {} no changes detected, skipping update",
+                self.id
+            );
         }
     }
 }
@@ -375,17 +350,55 @@ impl Actor for LiveViewSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        println!("LiveView session started: {}", self.id);
+        println!("🔌 LiveView session started: {}", self.id);
         self.hb(ctx);
 
-        // Send initial HTML
-        let initial_html = self.render_page().into_string();
-        let message = serde_json::json!({
-            "type": "html_update",
-            "html": initial_html
+        // Get initial tasks to render
+        println!("📋 Getting initial tasks for session {}", self.id);
+        let task_manager = self.task_manager.clone();
+        let ctx_addr = ctx.address();
+        let session_id = self.id;
+
+        actix::spawn(async move {
+            match task_manager.send(GetAllTasks).await {
+                Ok(tasks) => {
+                    println!(
+                        "✅ Initial tasks retrieved for session {}: {} tasks",
+                        session_id,
+                        tasks.len()
+                    );
+                    let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                }
+                Err(e) => {
+                    println!(
+                        "❌ Failed to get initial tasks for session {}: {}",
+                        session_id, e
+                    );
+                }
+            }
         });
+
+        // Send initial task grid HTML for tracking
+        let initial_task_grid_html = self.render_task_grid().into_string();
+        self.last_html = initial_task_grid_html.clone();
+        println!(
+            "📤 Sending initial task grid HTML ({} chars) for session {}",
+            initial_task_grid_html.len(),
+            self.id
+        );
+
+        // Send the full page for first load
+        let initial_full_html = self.render_page().into_string();
+        let message = serde_json::json!({
+            "type": "full_page_load",
+            "html": initial_full_html
+        });
+        println!(
+            "📤 Sending full page load ({} chars) for session {}",
+            initial_full_html.len(),
+            self.id
+        );
         ctx.text(message.to_string());
-        self.last_html = initial_html;
     }
 
     fn stopped(&mut self, _: &mut Self::Context) {
@@ -405,71 +418,149 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
             }
             Ok(ws::Message::Text(text)) => {
                 self.hb = Instant::now();
-                println!("Received WebSocket message: {}", text);
+                println!(
+                    "📨 Session {} received WebSocket message: {}",
+                    self.id, text
+                );
 
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
-                    match data.get("type").and_then(|t| t.as_str()) {
-                        Some("create_task") => {
-                            if let Some(task_type_str) = data.get("task_type").and_then(|t| t.as_str()) {
+                    let msg_type = data
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("unknown");
+                    println!(
+                        "📋 Session {} processing message type: {}",
+                        self.id, msg_type
+                    );
+
+                    match msg_type {
+                        "create_task" => {
+                            if let Some(task_type_str) =
+                                data.get("task_type").and_then(|t| t.as_str())
+                            {
                                 let task_type = match task_type_str {
                                     "quick" => TaskType::Quick { timeout_ms: None },
                                     "long" => TaskType::Long { timeout_ms: None },
                                     "error" => TaskType::Error {
                                         timeout_ms: None,
-                                        error_type: ErrorType::Random
+                                        error_type: ErrorType::Random,
                                     },
                                     _ => TaskType::Quick { timeout_ms: None },
                                 };
 
-                                println!("Creating task: {}", task_type_str);
+                                println!("🚀 Session {} creating task: {}", self.id, task_type_str);
                                 let task_manager = self.task_manager.clone();
                                 let ctx_addr = ctx.address();
+                                let session_id = self.id;
 
                                 actix::spawn(async move {
-                                    match task_manager.send(CreateTask {
-                                        name: String::new(),
-                                        message: "LiveView task".to_string(),
-                                        task_type,
-                                    }).await {
+                                    match task_manager
+                                        .send(CreateTask {
+                                            name: String::new(),
+                                            message: "LiveView task".to_string(),
+                                            task_type,
+                                        })
+                                        .await
+                                    {
                                         Ok(task_id) => {
-                                            println!("Task created with ID: {}", task_id);
+                                            println!(
+                                                "✅ Session {} task created with ID: {}",
+                                                session_id, task_id
+                                            );
                                             // Trigger a refresh after task creation
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                            if let Ok(tasks) = task_manager.send(GetAllTasks).await {
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
+                                            if let Ok(tasks) = task_manager.send(GetAllTasks).await
+                                            {
+                                                println!("📋 Session {} refreshing with {} tasks after creation", session_id, tasks.len());
                                                 let _ = ctx_addr.send(UpdateTasks { tasks }).await;
                                             }
                                         }
                                         Err(e) => {
-                                            println!("Failed to create task: {}", e);
+                                            println!(
+                                                "❌ Session {} failed to create task: {}",
+                                                session_id, e
+                                            );
                                         }
                                     }
                                 });
+                            } else {
+                                println!(
+                                    "⚠️  Session {} create_task message missing task_type",
+                                    self.id
+                                );
                             }
                         }
-                        Some("cancel_task") => {
-                            if let Some(task_id_str) = data.get("task_id").and_then(|t| t.as_str()) {
+                        "cancel_task" => {
+                            if let Some(task_id_str) = data.get("task_id").and_then(|t| t.as_str())
+                            {
                                 if let Ok(task_id) = Uuid::parse_str(task_id_str) {
+                                    println!("🗑️  Session {} canceling task: {}", self.id, task_id);
                                     let task_manager = self.task_manager.clone();
+                                    let session_id = self.id;
 
                                     actix::spawn(async move {
-                                        let _ = task_manager.send(CancelTaskById { id: task_id }).await;
+                                        match task_manager
+                                            .send(CancelTaskById { id: task_id })
+                                            .await
+                                        {
+                                            Ok(canceled) => {
+                                                println!(
+                                                    "✅ Session {} task cancellation result: {}",
+                                                    session_id, canceled
+                                                );
+                                            }
+                                            Err(e) => {
+                                                println!(
+                                                    "❌ Session {} failed to cancel task: {}",
+                                                    session_id, e
+                                                );
+                                            }
+                                        }
                                     });
+                                } else {
+                                    println!("⚠️  Session {} cancel_task message has invalid task_id: {}", self.id, task_id_str);
                                 }
+                            } else {
+                                println!(
+                                    "⚠️  Session {} cancel_task message missing task_id",
+                                    self.id
+                                );
                             }
                         }
-                        Some("refresh") => {
+                        "refresh" => {
+                            println!("🔄 Session {} processing refresh request", self.id);
                             let ctx_addr = ctx.address();
                             let task_manager = self.task_manager.clone();
                             let session_id = self.id;
 
                             actix::spawn(async move {
-                                if let Ok(tasks) = task_manager.send(GetAllTasks).await {
-                                    let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                match task_manager.send(GetAllTasks).await {
+                                    Ok(tasks) => {
+                                        println!(
+                                            "📋 Session {} refresh found {} tasks",
+                                            session_id,
+                                            tasks.len()
+                                        );
+                                        let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                    }
+                                    Err(e) => {
+                                        println!("❌ Session {} refresh failed: {}", session_id, e);
+                                    }
                                 }
                             });
                         }
-                        _ => {}
+                        _ => {
+                            println!("⚠️  Session {} unknown message type: {}", self.id, msg_type);
+                        }
                     }
+                } else {
+                    println!(
+                        "❌ Session {} failed to parse JSON message: {}",
+                        self.id, text
+                    );
                 }
             }
             Ok(ws::Message::Binary(_)) => println!("Unexpected binary message"),
@@ -492,7 +583,19 @@ impl Handler<UpdateTasks> for LiveViewSession {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateTasks, ctx: &mut Self::Context) {
+        println!(
+            "📝 Session {} updating tasks: received {} tasks",
+            self.id,
+            msg.tasks.len()
+        );
+
+        // Log task details for debugging
+        for task in &msg.tasks {
+            println!("   Task: {} - {} ({:?})", task.id, task.name, task.status);
+        }
+
         self.state.tasks = msg.tasks;
+        println!("📤 Session {} triggering HTML update", self.id);
         self.send_html_update(ctx);
     }
 }
