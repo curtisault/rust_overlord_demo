@@ -1,7 +1,7 @@
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message, MessageResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -400,12 +400,90 @@ pub struct TaskFinished {
     pub metadata: TaskMetadata,
 }
 
+// Enhanced Error Types for Better Error Handling
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ApiErrorType {
+    ValidationError,
+    NotFound,
+    InternalError,
+    TaskNotFound,
+    TaskAlreadyCompleted,
+    InvalidTaskType,
+    ConcurrencyError,
+    TimeoutError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiError {
+    pub error_type: ApiErrorType,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+    pub error_code: String,
+}
+
+impl ApiError {
+    pub fn validation_error(message: String, details: Option<serde_json::Value>) -> Self {
+        Self {
+            error_type: ApiErrorType::ValidationError,
+            message,
+            details,
+            error_code: "VALIDATION_ERROR".to_string(),
+        }
+    }
+
+    pub fn not_found(resource: &str, id: &str) -> Self {
+        Self {
+            error_type: ApiErrorType::NotFound,
+            message: format!("{} with id '{}' not found", resource, id),
+            details: Some(serde_json::json!({
+                "resource": resource,
+                "id": id
+            })),
+            error_code: "RESOURCE_NOT_FOUND".to_string(),
+        }
+    }
+
+    pub fn internal_error(message: String) -> Self {
+        Self {
+            error_type: ApiErrorType::InternalError,
+            message,
+            details: None,
+            error_code: "INTERNAL_ERROR".to_string(),
+        }
+    }
+
+    pub fn task_already_completed(task_id: &str) -> Self {
+        Self {
+            error_type: ApiErrorType::TaskAlreadyCompleted,
+            message: format!("Task '{}' is already completed and cannot be cancelled", task_id),
+            details: Some(serde_json::json!({
+                "task_id": task_id,
+                "allowed_statuses": ["InProgress"]
+            })),
+            error_code: "TASK_ALREADY_COMPLETED".to_string(),
+        }
+    }
+
+    pub fn invalid_task_type(task_type: &str) -> Self {
+        Self {
+            error_type: ApiErrorType::InvalidTaskType,
+            message: format!("Invalid task type: '{}'", task_type),
+            details: Some(serde_json::json!({
+                "provided_type": task_type,
+                "valid_types": ["quick", "long", "error", "custom"]
+            })),
+            error_code: "INVALID_TASK_TYPE".to_string(),
+        }
+    }
+}
+
 // API Response Types for Web Interface
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
     pub data: Option<T>,
-    pub error: Option<String>,
+    pub error: Option<ApiError>,
+    pub timestamp: DateTime<Utc>,
 }
 
 impl<T> ApiResponse<T> {
@@ -414,14 +492,16 @@ impl<T> ApiResponse<T> {
             success: true,
             data: Some(data),
             error: None,
+            timestamp: Utc::now(),
         }
     }
 
-    pub fn error(message: String) -> Self {
+    pub fn error(error: ApiError) -> Self {
         Self {
             success: false,
             data: None,
-            error: Some(message),
+            error: Some(error),
+            timestamp: Utc::now(),
         }
     }
 }
@@ -585,5 +665,138 @@ impl Handler<TaskFinished> for TaskManagerActor {
 
         // Clean up the task actor reference
         self.cleanup_finished_task(msg.id);
+    }
+}
+
+// WebSocket Message Monitoring System
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WsMessageDirection {
+    Incoming,
+    Outgoing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WsMessage {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub direction: WsMessageDirection,
+    pub message_type: String,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug)]
+pub struct WebSocketMonitorActor {
+    messages: VecDeque<WsMessage>,
+    max_messages: usize,
+}
+
+impl WebSocketMonitorActor {
+    pub fn new() -> Self {
+        Self {
+            messages: VecDeque::new(),
+            max_messages: 1000, // Keep last 1000 messages
+        }
+    }
+
+    fn add_message(&mut self, msg: WsMessage) {
+        if self.messages.len() >= self.max_messages {
+            self.messages.pop_front();
+        }
+        self.messages.push_back(msg);
+    }
+}
+
+impl Default for WebSocketMonitorActor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Actor for WebSocketMonitorActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        println!("📡 WebSocketMonitorActor started");
+    }
+
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        println!("📡 WebSocketMonitorActor stopped");
+    }
+}
+
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct LogWebSocketMessage {
+    pub session_id: Uuid,
+    pub direction: WsMessageDirection,
+    pub message_type: String,
+    pub content: String,
+    pub size_bytes: usize,
+}
+
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
+#[rtype(result = "Vec<WsMessage>")]
+pub struct GetWebSocketMessages {
+    pub limit: Option<usize>,
+    pub session_id: Option<Uuid>,
+}
+
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
+#[rtype(result = "usize")]
+pub struct ClearWebSocketMessages;
+
+impl Handler<LogWebSocketMessage> for WebSocketMonitorActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: LogWebSocketMessage, _ctx: &mut Self::Context) -> Self::Result {
+        let ws_message = WsMessage {
+            id: Uuid::new_v4(),
+            session_id: msg.session_id,
+            direction: msg.direction,
+            message_type: msg.message_type,
+            content: msg.content,
+            timestamp: Utc::now(),
+            size_bytes: msg.size_bytes,
+        };
+
+        self.add_message(ws_message);
+    }
+}
+
+impl Handler<GetWebSocketMessages> for WebSocketMonitorActor {
+    type Result = Vec<WsMessage>;
+
+    fn handle(&mut self, msg: GetWebSocketMessages, _ctx: &mut Self::Context) -> Self::Result {
+        let mut messages: Vec<WsMessage> = if let Some(session_id) = msg.session_id {
+            self.messages
+                .iter()
+                .filter(|m| m.session_id == session_id)
+                .cloned()
+                .collect()
+        } else {
+            self.messages.iter().cloned().collect()
+        };
+
+        // Sort by timestamp (newest first)
+        messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        // Apply limit
+        if let Some(limit) = msg.limit {
+            messages.truncate(limit);
+        }
+
+        messages
+    }
+}
+
+impl Handler<ClearWebSocketMessages> for WebSocketMonitorActor {
+    type Result = usize;
+
+    fn handle(&mut self, _msg: ClearWebSocketMessages, _ctx: &mut Self::Context) -> Self::Result {
+        let count = self.messages.len();
+        self.messages.clear();
+        count
     }
 }

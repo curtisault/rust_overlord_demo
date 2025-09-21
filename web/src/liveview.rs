@@ -6,6 +6,7 @@ use serde_json;
 use std::time::{Duration, Instant};
 use task_core::*;
 use uuid::Uuid;
+use crate::shared_header;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -25,16 +26,18 @@ pub struct LiveViewSession {
     id: Uuid,
     hb: Instant,
     task_manager: Addr<TaskManagerActor>,
+    ws_monitor: Addr<WebSocketMonitorActor>,
     state: LiveViewState,
     last_html: String,
 }
 
 impl LiveViewSession {
-    pub fn new(task_manager: Addr<TaskManagerActor>) -> Self {
+    pub fn new(task_manager: Addr<TaskManagerActor>, ws_monitor: Addr<WebSocketMonitorActor>) -> Self {
         Self {
             id: Uuid::new_v4(),
             hb: Instant::now(),
             task_manager,
+            ws_monitor,
             state: LiveViewState::default(),
             last_html: String::new(),
         }
@@ -244,23 +247,166 @@ impl LiveViewSession {
                                 padding: 40px;
                                 font-style: italic;
                             }
+                            .error-banner {
+                                background: linear-gradient(45deg, #fed7d7, #feb2b2);
+                                color: #9b2c2c;
+                                padding: 15px;
+                                margin: 20px 0;
+                                border-radius: 10px;
+                                border-left: 5px solid #e53e3e;
+                                font-weight: 600;
+                                text-align: center;
+                            }
+                            .task-form {
+                                background: rgba(255, 255, 255, 0.95);
+                                border-radius: 15px;
+                                padding: 25px;
+                                margin-bottom: 20px;
+                                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                            }
+                            .form-group {
+                                margin-bottom: 20px;
+                            }
+                            .form-group label {
+                                display: block;
+                                margin-bottom: 8px;
+                                font-weight: 600;
+                                color: #2d3748;
+                            }
+                            .form-group input, .form-group select {
+                                width: 100%;
+                                padding: 12px;
+                                border: 2px solid #e2e8f0;
+                                border-radius: 8px;
+                                font-size: 16px;
+                                transition: border-color 0.3s ease;
+                            }
+                            .form-group input:focus, .form-group select:focus {
+                                outline: none;
+                                border-color: #667eea;
+                            }
+                            .form-actions {
+                                display: flex;
+                                gap: 15px;
+                                justify-content: center;
+                            }
+                            .btn-secondary {
+                                background: #718096;
+                                color: white;
+                                padding: 12px 24px;
+                                border: none;
+                                border-radius: 8px;
+                                cursor: pointer;
+                                font-weight: 600;
+                            }
+                            .btn-primary {
+                                background: #667eea;
+                                color: white;
+                                padding: 12px 24px;
+                                border: none;
+                                border-radius: 8px;
+                                cursor: pointer;
+                                font-weight: 600;
+                            }
+                            .modal {
+                                display: none;
+                                position: fixed;
+                                z-index: 1000;
+                                left: 0;
+                                top: 0;
+                                width: 100%;
+                                height: 100%;
+                                background-color: rgba(0,0,0,0.6);
+                                backdrop-filter: blur(5px);
+                            }
+                            .modal.show {
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                            }
+                            .modal-content {
+                                background: white;
+                                border-radius: 15px;
+                                padding: 30px;
+                                max-width: 500px;
+                                width: 90%;
+                                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                                animation: modalSlideIn 0.3s ease-out;
+                            }
+                            @keyframes modalSlideIn {
+                                from {
+                                    opacity: 0;
+                                    transform: translateY(-50px) scale(0.9);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: translateY(0) scale(1);
+                                }
+                            }
+                            .modal-header {
+                                margin-bottom: 25px;
+                                text-align: center;
+                            }
+                            .modal-header h2 {
+                                color: #2d3748;
+                                margin-bottom: 10px;
+                                font-size: 1.8rem;
+                            }
+                            .modal-header .task-type-badge {
+                                display: inline-block;
+                                padding: 6px 12px;
+                                border-radius: 20px;
+                                font-size: 0.9rem;
+                                font-weight: 600;
+                                text-transform: uppercase;
+                            }
+                            .badge-quick { background: linear-gradient(45deg, #4facfe, #00f2fe); color: white; }
+                            .badge-long { background: linear-gradient(45deg, #fa709a, #fee140); color: white; }
+                            .badge-error { background: linear-gradient(45deg, #ff6b6b, #ffa500); color: white; }
+                            .badge-custom { background: linear-gradient(45deg, #667eea, #764ba2); color: white; }
                         "#))
                     }
                 }
                 body {
                     div class="container" {
+                        (shared_header::render_header())
                         div class="header" {
                             h1 { "Task Overlord LiveView" }
                             div class="controls" {
-                                button class="btn btn-quick" onclick="createTask('quick')" { "⚡ Quick Task (2s)" }
-                                button class="btn btn-long" onclick="createTask('long')" { "⏰ Long Task (10s)" }
-                                button class="btn btn-error" onclick="createTask('error')" { "💥 Error Task" }
+                                button class="btn btn-quick" onclick="openTaskModal('quick')" { "⚡ Quick Task (2s)" }
+                                button class="btn btn-long" onclick="openTaskModal('long')" { "⏰ Long Task (10s)" }
+                                button class="btn btn-error" onclick="openTaskModal('error')" { "💥 Error Task" }
                             }
                         }
                         div class="task-grid" id="task-grid" {
                             (self.render_task_column("In Progress", &self.get_tasks_by_status(TaskStatus::InProgress), "in-progress"))
                             (self.render_task_column("Completed", &self.get_tasks_by_status(TaskStatus::Completed), "completed"))
                             (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
+                        }
+
+                        // Task Creation Modal
+                        div class="modal" id="task-modal" onclick="closeModalOnBackdrop(event)" {
+                            div class="modal-content" {
+                                div class="modal-header" {
+                                    h2 { "Create Task" }
+                                    div class="task-type-badge" id="modal-task-type-badge" { "Quick Task" }
+                                }
+                                form id="task-form" onsubmit="createCustomTask(event)" {
+                                    div class="form-group" {
+                                        label for="task-name" { "Task Name (optional):" }
+                                        input type="text" id="task-name" placeholder="Leave empty for auto-generated name";
+                                    }
+                                    div class="form-group" {
+                                        label for="task-message" { "Message:" }
+                                        input type="text" id="task-message" placeholder="Enter task message" required;
+                                    }
+                                    div id="task-options" {}
+                                    div class="form-actions" {
+                                        button type="button" onclick="closeModal()" class="btn btn-secondary" { "Cancel" }
+                                        button type="submit" class="btn btn-primary" { "Create Task" }
+                                    }
+                                }
+                            }
                         }
                     }
                     script src="/static/app.js" {}
@@ -378,7 +524,24 @@ impl LiveViewSession {
                 "html": new_task_grid_html
             });
 
-            ctx.text(message.to_string());
+            let message_str = message.to_string();
+
+            // Log outgoing message
+            let ws_monitor = self.ws_monitor.clone();
+            let session_id = self.id;
+            let content_for_log = message_str.clone();
+            let size_bytes = message_str.len();
+            actix::spawn(async move {
+                let _ = ws_monitor.send(LogWebSocketMessage {
+                    session_id,
+                    direction: WsMessageDirection::Outgoing,
+                    message_type: "task_grid_update".to_string(),
+                    content: content_for_log,
+                    size_bytes,
+                }).await;
+            });
+
+            ctx.text(message_str);
             self.last_html = new_task_grid_html;
         } else {
             println!(
@@ -441,7 +604,25 @@ impl Actor for LiveViewSession {
             initial_full_html.len(),
             self.id
         );
-        ctx.text(message.to_string());
+
+        let message_str = message.to_string();
+
+        // Log outgoing full page load message
+        let ws_monitor = self.ws_monitor.clone();
+        let session_id = self.id;
+        let content_for_log = message_str.clone();
+        let size_bytes = message_str.len();
+        actix::spawn(async move {
+            let _ = ws_monitor.send(LogWebSocketMessage {
+                session_id,
+                direction: WsMessageDirection::Outgoing,
+                message_type: "full_page_load".to_string(),
+                content: content_for_log,
+                size_bytes,
+            }).await;
+        });
+
+        ctx.text(message_str);
     }
 
     fn stopped(&mut self, _: &mut Self::Context) {
@@ -476,11 +657,38 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                         self.id, msg_type
                     );
 
+                    // Log incoming message
+                    let ws_monitor = self.ws_monitor.clone();
+                    let session_id = self.id;
+                    let text_string = text.to_string();
+                    let size_bytes = text.len();
+                    let msg_type_string = msg_type.to_string();
+                    actix::spawn(async move {
+                        let _ = ws_monitor.send(LogWebSocketMessage {
+                            session_id,
+                            direction: WsMessageDirection::Incoming,
+                            message_type: msg_type_string,
+                            content: text_string,
+                            size_bytes,
+                        }).await;
+                    });
+
                     match msg_type {
-                        "create_task" => {
+                        "create_task" | "create_custom_task" => {
                             if let Some(task_type_str) =
                                 data.get("task_type").and_then(|t| t.as_str())
                             {
+                                // Extract custom parameters for custom tasks
+                                let task_name = data.get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                let task_message = data.get("message")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("LiveView task")
+                                    .to_string();
+
                                 let task_type = match task_type_str {
                                     "quick" => TaskType::Quick { timeout_ms: None },
                                     "long" => TaskType::Long { timeout_ms: None },
@@ -488,10 +696,24 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                         timeout_ms: None,
                                         error_type: ErrorType::Random,
                                     },
+                                    "custom" => {
+                                        let timeout_ms = data.get("custom_timeout")
+                                            .and_then(|t| t.as_u64())
+                                            .unwrap_or(5000);
+                                        let failure_rate = data.get("custom_failure_rate")
+                                            .and_then(|f| f.as_f64())
+                                            .map(|f| f as f32);
+
+                                        TaskType::Custom {
+                                            name: if task_name.is_empty() { "Custom Task".to_string() } else { task_name.clone() },
+                                            timeout_ms,
+                                            failure_rate,
+                                        }
+                                    },
                                     _ => TaskType::Quick { timeout_ms: None },
                                 };
 
-                                println!("🚀 Session {} creating task: {}", self.id, task_type_str);
+                                println!("🚀 Session {} creating task: {} (name: {}, message: {})", self.id, task_type_str, task_name, task_message);
                                 let task_manager = self.task_manager.clone();
                                 let ctx_addr = ctx.address();
                                 let session_id = self.id;
@@ -499,8 +721,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                 actix::spawn(async move {
                                     match task_manager
                                         .send(CreateTask {
-                                            name: String::new(),
-                                            message: "LiveView task".to_string(),
+                                            name: task_name,
+                                            message: task_message,
                                             task_type,
                                         })
                                         .await
@@ -544,6 +766,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                     let task_manager = self.task_manager.clone();
                                     let session_id = self.id;
 
+                                    let ctx_addr = ctx.address();
                                     actix::spawn(async move {
                                         match task_manager
                                             .send(CancelTaskById { id: task_id })
@@ -554,6 +777,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for LiveViewSession {
                                                     "✅ Session {} task cancellation result: {}",
                                                     session_id, canceled
                                                 );
+                                                // Trigger a refresh after task cancellation
+                                                tokio::time::sleep(tokio::time::Duration::from_millis(
+                                                    100,
+                                                ))
+                                                .await;
+                                                if let Ok(tasks) = task_manager.send(GetAllTasks).await
+                                                {
+                                                    println!("📋 Session {} refreshing with {} tasks after cancellation", session_id, tasks.len());
+                                                    let _ = ctx_addr.send(UpdateTasks { tasks }).await;
+                                                }
                                             }
                                             Err(e) => {
                                                 println!(
@@ -648,6 +881,6 @@ pub async fn websocket_handler(
     stream: web::Payload,
     data: web::Data<crate::AppState>,
 ) -> Result<actix_web::HttpResponse, actix_web::Error> {
-    let session = LiveViewSession::new(data.task_manager.clone());
+    let session = LiveViewSession::new(data.task_manager.clone(), data.ws_monitor.clone());
     ws::start(session, &req, stream)
 }
