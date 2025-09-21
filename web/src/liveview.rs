@@ -1,4 +1,4 @@
-use crate::shared_header;
+use crate::{modal, shared_header};
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, StreamHandler};
 use actix_web::web;
 use actix_web_actors::ws;
@@ -369,6 +369,7 @@ impl LiveViewSession {
                             .badge-custom { background: linear-gradient(45deg, #667eea, #764ba2); color: white; }
                         "#))
                     }
+                    (modal::render_modal_styles())
                 }
                 body {
                     div class="container" {
@@ -387,30 +388,8 @@ impl LiveViewSession {
                             (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
                         }
 
-                        // Task Creation Modal
-                        div class="modal" id="task-modal" onclick="closeModalOnBackdrop(event)" {
-                            div class="modal-content" {
-                                div class="modal-header" {
-                                    h2 { "Create Task" }
-                                    div class="task-type-badge" id="modal-task-type-badge" { "Quick Task" }
-                                }
-                                form id="task-form" onsubmit="createCustomTask(event)" {
-                                    div class="form-group" {
-                                        label for="task-name" { "Task Name (optional):" }
-                                        input type="text" id="task-name" placeholder="Leave empty for auto-generated name";
-                                    }
-                                    div class="form-group" {
-                                        label for="task-message" { "Message:" }
-                                        input type="text" id="task-message" placeholder="Enter task message" required;
-                                    }
-                                    div id="task-options" {}
-                                    div class="form-actions" {
-                                        button type="button" onclick="closeModal()" class="btn btn-secondary" { "Cancel" }
-                                        button type="submit" class="btn btn-primary" { "Create Task" }
-                                    }
-                                }
-                            }
-                        }
+                        // Task Creation Modal (Server-Generated - will be updated by JS)
+                        (modal::render_task_modal("custom"))
                     }
                     script src="/static/app.js" {}
                 }

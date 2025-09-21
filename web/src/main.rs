@@ -9,6 +9,7 @@ use task_core::*;
 use uuid::Uuid;
 
 mod liveview;
+mod modal;
 mod shared_header;
 
 // Application state
@@ -23,6 +24,115 @@ struct CreateTaskRequest {
     name: String,
     message: String,
     task_type: TaskTypeRequest,
+}
+
+#[derive(Deserialize)]
+struct CreateTaskFormRequest {
+    name: String,
+    message: String,
+    task_type: String,
+    custom_timeout: Option<u64>,
+    custom_failure_rate: Option<f32>,
+}
+
+impl CreateTaskFormRequest {
+    fn validate(&self) -> Result<(), ApiError> {
+        // Validate name length
+        if self.name.len() > 100 {
+            return Err(ApiError::validation_error(
+                "Task name cannot exceed 100 characters".to_string(),
+                Some(serde_json::json!({
+                    "field": "name",
+                    "provided_length": self.name.len(),
+                    "max_length": 100
+                })),
+            ));
+        }
+
+        // Validate message length
+        if self.message.len() > 500 {
+            return Err(ApiError::validation_error(
+                "Task message cannot exceed 500 characters".to_string(),
+                Some(serde_json::json!({
+                    "field": "message",
+                    "provided_length": self.message.len(),
+                    "max_length": 500
+                })),
+            ));
+        }
+
+        // Validate message not empty
+        if self.message.trim().is_empty() {
+            return Err(ApiError::validation_error(
+                "Task message is required".to_string(),
+                Some(serde_json::json!({
+                    "field": "message"
+                })),
+            ));
+        }
+
+        // Validate custom task parameters
+        if self.task_type == "custom" {
+            if let Some(timeout) = self.custom_timeout {
+                if timeout > 300000 {
+                    return Err(ApiError::validation_error(
+                        "Custom task timeout cannot exceed 5 minutes (300000ms)".to_string(),
+                        Some(serde_json::json!({
+                            "field": "custom_timeout",
+                            "provided_value": timeout,
+                            "max_value": 300000
+                        })),
+                    ));
+                }
+                if timeout < 100 {
+                    return Err(ApiError::validation_error(
+                        "Custom task timeout must be at least 100ms".to_string(),
+                        Some(serde_json::json!({
+                            "field": "custom_timeout",
+                            "provided_value": timeout,
+                            "min_value": 100
+                        })),
+                    ));
+                }
+            }
+
+            if let Some(rate) = self.custom_failure_rate {
+                if rate < 0.0 || rate > 1.0 {
+                    return Err(ApiError::validation_error(
+                        "Failure rate must be between 0.0 and 1.0".to_string(),
+                        Some(serde_json::json!({
+                            "field": "custom_failure_rate",
+                            "provided_value": rate,
+                            "valid_range": "0.0-1.0"
+                        })),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn to_task_type(&self) -> TaskType {
+        match self.task_type.as_str() {
+            "quick" => TaskType::Quick { timeout_ms: None },
+            "long" => TaskType::Long { timeout_ms: None },
+            "error" => TaskType::Error {
+                timeout_ms: None,
+                error_type: ErrorType::Random,
+            },
+            "custom" => TaskType::Custom {
+                name: if self.name.trim().is_empty() {
+                    "Custom Task".to_string()
+                } else {
+                    self.name.clone()
+                },
+                timeout_ms: self.custom_timeout.unwrap_or(5000),
+                failure_rate: self.custom_failure_rate,
+            },
+            _ => TaskType::Quick { timeout_ms: None },
+        }
+    }
 }
 
 impl CreateTaskRequest {
@@ -169,6 +279,52 @@ async fn create_task(
     };
 
     // Create task with proper error handling
+    let task_id = match data
+        .task_manager
+        .send(CreateTask {
+            name: task_name.clone(),
+            message: req.message.clone(),
+            task_type,
+        })
+        .await
+    {
+        Ok(id) => id,
+        Err(_) => {
+            let error = ApiError::internal_error(
+                "Failed to create task - internal service error".to_string(),
+            );
+            return Ok(HttpResponse::InternalServerError().json(ApiResponse::<()>::error(error)));
+        }
+    };
+
+    let response = TaskCreateResponse {
+        id: task_id,
+        name: task_name,
+        status: TaskStatus::InProgress,
+        created_at: chrono::Utc::now(),
+    };
+
+    Ok(HttpResponse::Created().json(ApiResponse::success(response)))
+}
+
+#[post("/tasks/form")]
+async fn create_task_from_form(
+    data: web::Data<AppState>,
+    req: web::Json<CreateTaskFormRequest>,
+) -> Result<impl Responder> {
+    // Server-side form validation
+    if let Err(validation_error) = req.validate() {
+        return Ok(HttpResponse::BadRequest().json(ApiResponse::<()>::error(validation_error)));
+    }
+
+    let task_type = req.to_task_type();
+    let task_name = if req.name.trim().is_empty() {
+        task_type.get_name()
+    } else {
+        req.name.clone()
+    };
+
+    // Create task with comprehensive error handling
     let task_id = match data
         .task_manager
         .send(CreateTask {
@@ -674,6 +830,7 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .service(index)
                     .service(create_task)
+                    .service(create_task_from_form)
                     .service(get_all_tasks)
                     .service(get_task)
                     .service(cancel_task)

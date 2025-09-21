@@ -792,10 +792,12 @@ async function createCustomTaskRestMode(formData, span) {
         const requestBody = {
             name: formData.name,
             message: formData.message,
-            task_type: buildTaskTypeRequest(formData)
+            task_type: formData.task_type,
+            custom_timeout: formData.custom_timeout,
+            custom_failure_rate: formData.custom_failure_rate
         };
 
-        const response = await fetch('/api/tasks', {
+        const response = await fetch('/api/tasks/form', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -858,96 +860,94 @@ function buildTaskTypeRequest(formData) {
     }
 }
 
-/**
- * Update task options based on selected task type
- */
-function updateTaskOptions() {
-    const taskType = document.getElementById('task-type').value;
-    const optionsDiv = document.getElementById('task-options');
-
-    if (taskType === 'custom') {
-        optionsDiv.innerHTML = `
-            <div class="form-group">
-                <label for="custom-timeout">Timeout (ms):</label>
-                <input type="number" id="custom-timeout" value="5000" min="100" max="300000">
-            </div>
-            <div class="form-group">
-                <label for="custom-failure-rate">Failure Rate (0.0-1.0):</label>
-                <input type="number" id="custom-failure-rate" value="0" min="0" max="1" step="0.1">
-            </div>
-        `;
-    } else {
-        optionsDiv.innerHTML = '';
-    }
-}
 
 /**
  * Clear the form inputs
  */
 function clearForm() {
-    document.getElementById('task-name').value = '';
-    document.getElementById('task-message').value = '';
-    document.getElementById('task-options').innerHTML = '';
+    const nameInput = document.getElementById('task-name');
+    const messageInput = document.getElementById('task-message');
+    const timeoutInput = document.getElementById('custom-timeout');
+    const failureRateInput = document.getElementById('custom-failure-rate');
+
+    if (nameInput) nameInput.value = '';
+    if (messageInput) messageInput.value = '';
+    if (timeoutInput) timeoutInput.value = '5000';
+    if (failureRateInput) failureRateInput.value = '0';
 }
 
 /**
- * Open task creation modal with pre-selected task type
+ * Open task creation modal (modal content is server-generated)
  */
 function openTaskModal(taskType) {
     const modal = document.getElementById('task-modal');
     const badge = document.getElementById('modal-task-type-badge');
-    const taskOptions = document.getElementById('task-options');
 
-    // Set up the modal based on task type
+    // Task type configurations
     const taskConfig = {
         quick: {
             name: 'Quick Task',
             badge: 'badge-quick',
-            placeholder: 'Quick task message (completes in ~2s)'
+            placeholder: 'Quick task message (completes in ~2s)',
+            description: 'A fast task that completes in approximately 2 seconds'
         },
         long: {
             name: 'Long Task',
             badge: 'badge-long',
-            placeholder: 'Long task message (completes in ~10s)'
+            placeholder: 'Long task message (completes in ~10s)',
+            description: 'A longer task that takes approximately 10 seconds to complete'
         },
         error: {
             name: 'Error Task',
             badge: 'badge-error',
-            placeholder: 'Error task message (will fail for testing)'
+            placeholder: 'Error task message (will fail for testing)',
+            description: 'A task designed to fail for testing error handling'
         },
         custom: {
             name: 'Custom Task',
             badge: 'badge-custom',
-            placeholder: 'Custom task message'
+            placeholder: 'Custom task message',
+            description: 'A fully customizable task with configurable timeout and failure rate'
         }
     };
 
     const config = taskConfig[taskType] || taskConfig.quick;
 
-    // Update modal UI
-    badge.textContent = config.name;
-    badge.className = `task-type-badge ${config.badge}`;
+    // Update modal UI dynamically
+    if (badge) {
+        badge.textContent = config.name.toUpperCase();
+        badge.className = `task-type-badge ${config.badge}`;
+    }
+
+    // Update task description
+    const description = document.getElementById('modal-task-description');
+    if (description) {
+        description.textContent = config.description;
+    }
+
+    // Update the submit button text
+    const submitButton = modal.querySelector('button[type="submit"]');
+    if (submitButton) {
+        submitButton.textContent = `CREATE ${config.name.toUpperCase()}`;
+    }
 
     // Update message placeholder
-    document.getElementById('task-message').placeholder = config.placeholder;
+    const messageInput = document.getElementById('task-message');
+    if (messageInput) {
+        messageInput.placeholder = config.placeholder;
+    }
 
-    // Store the selected task type
+    // Update the modal task type in the modal and form data attributes
     modal.dataset.taskType = taskType;
+    const form = modal.querySelector('#task-form');
+    if (form) {
+        form.dataset.taskType = taskType;
+    }
 
-    // Show custom options for custom tasks
-    if (taskType === 'custom') {
-        taskOptions.innerHTML = `
-            <div class="form-group">
-                <label for="custom-timeout">Timeout (ms):</label>
-                <input type="number" id="custom-timeout" value="5000" min="100" max="300000">
-            </div>
-            <div class="form-group">
-                <label for="custom-failure-rate">Failure Rate (0.0-1.0):</label>
-                <input type="number" id="custom-failure-rate" value="0" min="0" max="1" step="0.1">
-            </div>
-        `;
-    } else {
-        taskOptions.innerHTML = '';
+    // Show/hide custom options based on task type
+    const customOptions = modal.querySelector('.custom-options');
+    if (customOptions) {
+        customOptions.style.display = taskType === 'custom' ? 'block' : 'none';
     }
 
     // Clear form and show modal
@@ -956,7 +956,7 @@ function openTaskModal(taskType) {
 
     // Focus on message input
     setTimeout(() => {
-        document.getElementById('task-message').focus();
+        if (messageInput) messageInput.focus();
     }, 100);
 
     logTelemetryEvent('MODAL_OPENED', {
@@ -1017,7 +1017,6 @@ if (typeof window !== 'undefined') {
     window.cancelTask = cancelTask;
     window.refreshTasks = refreshTasks;
     window.createCustomTask = createCustomTask;
-    window.updateTaskOptions = updateTaskOptions;
     window.clearForm = clearForm;
     window.openTaskModal = openTaskModal;
     window.closeModal = closeModal;
