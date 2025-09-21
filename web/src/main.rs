@@ -207,37 +207,18 @@ async fn task_stream(data: web::Data<AppState>) -> Result<impl Responder> {
 }
 
 async fn liveview_page() -> impl Responder {
-    HttpResponse::Ok()
-        .content_type("text/html")
-        .body(r#"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>LiveView Redirect</title>
-    <script>
-        // Simple redirect to establish WebSocket connection
-        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(protocol + '//' + location.host + '/ws/');
-
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === 'full_page_load') {
-                document.open();
-                document.write(data.html);
-                document.close();
-            }
-        };
-
-        ws.onerror = function() {
-            document.body.innerHTML = '<h1>Connecting to LiveView...</h1>';
-        };
-    </script>
-</head>
-<body>
-    <h1>Initializing LiveView...</h1>
-</body>
-</html>
-        "#)
+    let file_path = "./web/static/redirect.html";
+    match std::fs::read_to_string(file_path) {
+        Ok(content) => HttpResponse::Ok()
+            .content_type("text/html")
+            .body(content),
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", file_path, e);
+            eprintln!("Current working directory: {:?}", std::env::current_dir());
+            HttpResponse::InternalServerError()
+                .body(format!("Error loading LiveView redirect page: {} (cwd: {:?})", e, std::env::current_dir()))
+        }
+    }
 }
 
 #[actix_web::main]
@@ -267,10 +248,10 @@ async fn main() -> std::io::Result<()> {
                     .service(health_check)
                     // .service(task_stream) // Temporarily disabled
             )
+            .route("/", web::get().to(liveview_page))
             .route("/ws/", web::get().to(liveview::websocket_handler))
             .route("/liveview", web::get().to(liveview_page))
-            .service(fs::Files::new("/", "./web/static")
-                .index_file("index.html"))
+            .service(fs::Files::new("/static/", "./web/static"))
     })
     .bind("127.0.0.1:3333")?
     .run()

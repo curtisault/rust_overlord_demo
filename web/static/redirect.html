@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LiveView Redirect</title>
+    <script>
+        // Simple redirect to establish WebSocket connection
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(protocol + '//' + location.host + '/ws/');
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'full_page_load') {
+                document.open();
+                document.write(data.html);
+                document.close();
+            }
+        };
+
+        ws.onerror = function() {
+            document.body.innerHTML = '<h1>Connecting to LiveView...</h1>';
+        };
+    </script>
+</head>
+<body>
+    <h1>Initializing LiveView...</h1>
+</body>
+</html>

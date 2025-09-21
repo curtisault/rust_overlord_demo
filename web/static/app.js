@@ -1,405 +1,451 @@
-class TaskDashboard {
-    constructor() {
-        this.eventSource = null;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 1000;
-        this.tasks = new Map();
+/**
+ * WebSocket LiveView Connection Manager with OpenTelemetry
+ *
+ * This module handles the WebSocket connection for the LiveView system, providing
+ * real-time DOM updates without full page refreshes, similar to Phoenix LiveView.
+ *
+ * Features:
+ * - Persistent WebSocket connection with automatic reconnection
+ * - DOM diffing and selective updates to maintain state
+ * - Task creation and management through WebSocket messages
+ * - Automatic refresh polling every 2 seconds
+ * - Full page load on initial connection, partial updates thereafter
+ * - OpenTelemetry instrumentation for comprehensive telemetry tracking
+ *
+ * Message Types:
+ * - full_page_load: Complete HTML document replacement (initial load only)
+ * - task_grid_update: Partial update of task grid content (DOM diffing)
+ * - create_task: Create a new task (outbound)
+ * - cancel_task: Cancel an existing task (outbound)
+ * - refresh: Request current task state (outbound)
+ *
+ * DOM Diffing Strategy:
+ * - Compares new HTML with existing DOM elements
+ * - Updates only changed content (task lists, counts)
+ * - Preserves WebSocket connection and JavaScript state
+ * - Updates task columns independently for efficiency
+ *
+ * Telemetry:
+ * - Tracks all WebSocket operations with OpenTelemetry
+ * - Records user interactions, connection events, and DOM updates
+ * - Exports traces to console (can be configured for real exporters)
+ *
+ * Usage:
+ *   Include OpenTelemetry CDN scripts before this file
+ *   The connection will be established automatically and handle all updates.
+ *
+ * Author: Claude Code Assistant
+ * Compatible with: Modern browsers with WebSocket and OpenTelemetry support
+ */
 
-        this.initializeEventListeners();
-        this.connectToStream();
-        this.loadInitialTasks();
-    }
+// Global WebSocket connection and telemetry
+window.ws = null;
+let tracer = null;
+let isConnecting = false;
 
-    initializeEventListeners() {
-        // Task creation buttons
-        document.getElementById('quick-task-btn').addEventListener('click', () => {
-            this.openTaskModal('quick');
-        });
+// Initialize OpenTelemetry if available
+function initTelemetry() {
+    if (typeof opentelemetry !== 'undefined') {
+        const { NodeSDK } = opentelemetry;
 
-        document.getElementById('long-task-btn').addEventListener('click', () => {
-            this.openTaskModal('long');
-        });
+        // Create a tracer
+        tracer = opentelemetry.trace.getTracer('liveview-websocket', '1.0.0');
+        console.log('📊 [TELEMETRY] OpenTelemetry initialized');
 
-        document.getElementById('error-task-btn').addEventListener('click', () => {
-            this.openTaskModal('error');
-        });
-
-        // Modal controls
-        document.getElementById('modal-close').addEventListener('click', () => {
-            this.closeTaskModal();
-        });
-
-        document.getElementById('modal-cancel').addEventListener('click', () => {
-            this.closeTaskModal();
-        });
-
-        // Task form submission
-        document.getElementById('task-form').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.submitTaskForm();
-        });
-
-        // Close modal on backdrop click
-        document.getElementById('task-modal').addEventListener('click', (e) => {
-            if (e.target.id === 'task-modal') {
-                this.closeTaskModal();
-            }
-        });
-    }
-
-    connectToStream() {
-        this.updateConnectionStatus('connecting');
-        this.pollTasks();
-    }
-
-    async pollTasks() {
-        try {
-            const response = await fetch('/api/tasks');
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success) {
-                    this.updateTaskList(data.data.tasks);
-                    this.updateConnectionStatus('online');
-                    this.reconnectAttempts = 0;
-                } else {
-                    throw new Error('Failed to get tasks');
-                }
-            } else {
-                throw new Error('HTTP error');
-            }
-        } catch (error) {
-            console.error('Error polling tasks:', error);
-            this.updateConnectionStatus('offline');
-            this.handleReconnection();
-        }
-
-        // Poll every 2 seconds
-        setTimeout(() => this.pollTasks(), 2000);
-    }
-
-    handleReconnection() {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`🔄 Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-
-            setTimeout(() => {
-                this.pollTasks();
-            }, this.reconnectDelay * this.reconnectAttempts);
-        } else {
-            console.error('❌ Max reconnection attempts reached');
-        }
-    }
-
-    updateConnectionStatus(status) {
-        const indicator = document.getElementById('connection-indicator');
-        const statusText = indicator.querySelector('span');
-
-        indicator.className = status;
-
-        switch (status) {
-            case 'online':
-                statusText.textContent = 'Connected';
-                break;
-            case 'connecting':
-                statusText.textContent = 'Connecting...';
-                break;
-            case 'offline':
-            default:
-                statusText.textContent = 'Disconnected';
-                break;
-        }
-    }
-
-    async loadInitialTasks() {
-        try {
-            const response = await fetch('/api/tasks');
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success) {
-                    this.updateTaskList(data.data.tasks);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to load initial tasks:', error);
-        }
-    }
-
-    updateTaskList(tasks) {
-        // Clear current tasks
-        this.tasks.clear();
-
-        const columns = {
-            'in-progress': document.getElementById('in-progress-tasks'),
-            'completed': document.getElementById('completed-tasks'),
-            'error': document.getElementById('error-tasks')
-        };
-
-        // Clear all columns
-        Object.values(columns).forEach(column => {
-            column.innerHTML = '';
-        });
-
-        // Group tasks by status
-        const tasksByStatus = {
-            'in-progress': [],
-            'completed': [],
-            'error': []
-        };
-
-        tasks.forEach(task => {
-            this.tasks.set(task.id, task);
-
-            const status = task.status.toLowerCase().replace(' ', '-');
-            if (tasksByStatus[status]) {
-                tasksByStatus[status].push(task);
-            }
-        });
-
-        // Render tasks in each column
-        Object.entries(tasksByStatus).forEach(([status, statusTasks]) => {
-            const column = columns[status];
-            if (column) {
-                statusTasks.forEach(task => {
-                    column.appendChild(this.createTaskCard(task));
-                });
-            }
-        });
-
-        // Update counts
-        this.updateTaskCounts(tasksByStatus);
-    }
-
-    createTaskCard(task) {
-        const card = document.createElement('div');
-        card.className = `task-card ${task.status.toLowerCase().replace(' ', '-')}`;
-        card.dataset.taskId = task.id;
-
-        const statusIcon = this.getStatusIcon(task.status);
-        const statusClass = task.status.toLowerCase().replace(' ', '-');
-
-        const startTime = task.started_at ? this.formatDateTime(task.started_at) : 'Not started';
-        const endTime = task.finished_at ? this.formatDateTime(task.finished_at) : 'Running...';
-        const duration = task.duration_ms ? `${task.duration_ms}ms` : 'Calculating...';
-
-        card.innerHTML = `
-            <div class="task-header">
-                <div class="task-title">${this.escapeHtml(task.name)}</div>
-                <div class="task-actions">
-                    ${task.status === 'InProgress' ? `
-                        <button class="task-action cancel" onclick="taskDashboard.cancelTask('${task.id}')" title="Cancel Task">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    ` : ''}
-                </div>
-            </div>
-
-            <div class="task-status ${statusClass}">
-                <i class="${statusIcon}"></i>
-                ${task.status}
-            </div>
-
-            <div class="task-message">
-                ${this.escapeHtml(task.message)}
-            </div>
-
-            <div class="task-meta">
-                <div class="meta-item">
-                    <div class="meta-label">Started</div>
-                    <div class="meta-value">${startTime}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Finished</div>
-                    <div class="meta-value">${endTime}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Duration</div>
-                    <div class="meta-value">${duration}</div>
-                </div>
-                <div class="meta-item">
-                    <div class="meta-label">Result</div>
-                    <div class="meta-value">${task.result ? this.escapeHtml(task.result) : 'Pending...'}</div>
-                </div>
-            </div>
-        `;
-
-        return card;
-    }
-
-    getStatusIcon(status) {
-        switch (status.toLowerCase()) {
-            case 'inprogress':
-                return 'fas fa-spinner fa-spin';
-            case 'completed':
-                return 'fas fa-check-circle';
-            case 'error':
-                return 'fas fa-times-circle';
-            default:
-                return 'fas fa-question-circle';
-        }
-    }
-
-    updateTaskCounts(tasksByStatus) {
-        document.getElementById('in-progress-count').textContent = tasksByStatus['in-progress'].length;
-        document.getElementById('completed-count').textContent = tasksByStatus['completed'].length;
-        document.getElementById('error-count').textContent = tasksByStatus['error'].length;
-    }
-
-    openTaskModal(taskType) {
-        const modal = document.getElementById('task-modal');
-        const title = document.getElementById('modal-title');
-        const options = document.getElementById('task-options');
-
-        // Reset form
-        document.getElementById('task-form').reset();
-
-        // Set modal title and create task-specific options
-        switch (taskType) {
-            case 'quick':
-                title.textContent = 'Create Quick Task';
-                options.innerHTML = `
-                    <div class="form-group">
-                        <label for="timeout">Timeout (ms, optional):</label>
-                        <input type="number" id="timeout" placeholder="Leave empty for default (2000ms)" min="100">
-                    </div>
-                `;
-                break;
-
-            case 'long':
-                title.textContent = 'Create Long Task';
-                options.innerHTML = `
-                    <div class="form-group">
-                        <label for="timeout">Timeout (ms, optional):</label>
-                        <input type="number" id="timeout" placeholder="Leave empty for default (10000ms)" min="100">
-                    </div>
-                `;
-                break;
-
-            case 'error':
-                title.textContent = 'Create Error Task';
-                options.innerHTML = `
-                    <div class="form-group">
-                        <label for="timeout">Timeout (ms, optional):</label>
-                        <input type="number" id="timeout" placeholder="Leave empty for default" min="100">
-                    </div>
-                    <div class="form-group">
-                        <label for="error-type">Error Type:</label>
-                        <select id="error-type">
-                            <option value="immediate">Immediate Error</option>
-                            <option value="timeout">Timeout Error</option>
-                            <option value="random">Random Error</option>
-                            <option value="network">Network Error</option>
-                            <option value="validation">Validation Error</option>
-                        </select>
-                    </div>
-                `;
-                break;
-        }
-
-        modal.dataset.taskType = taskType;
-        modal.classList.add('show');
-    }
-
-    closeTaskModal() {
-        const modal = document.getElementById('task-modal');
-        modal.classList.remove('show');
-    }
-
-    async submitTaskForm() {
-        const modal = document.getElementById('task-modal');
-        const taskType = modal.dataset.taskType;
-
-        const name = document.getElementById('task-name').value.trim();
-        const message = document.getElementById('task-message').value.trim();
-
-        if (!message) {
-            alert('Please enter a task message');
-            return;
-        }
-
-        let taskData = {
-            name: name,
-            message: message,
-            task_type: { type: taskType }
-        };
-
-        // Add task-specific options
-        const timeoutInput = document.getElementById('timeout');
-        if (timeoutInput && timeoutInput.value) {
-            taskData.task_type.timeout_ms = parseInt(timeoutInput.value);
-        }
-
-        if (taskType === 'error') {
-            const errorType = document.getElementById('error-type').value;
-            taskData.task_type.error_type = errorType;
-        }
-
-        try {
-            const response = await fetch('/api/tasks', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(taskData)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                if (result.success) {
-                    console.log('✅ Task created:', result.data);
-                    this.closeTaskModal();
-                } else {
-                    alert('Failed to create task: ' + result.error);
-                }
-            } else {
-                alert('Failed to create task. Please try again.');
-            }
-        } catch (error) {
-            console.error('Error creating task:', error);
-            alert('Failed to create task. Please check your connection.');
-        }
-    }
-
-    async cancelTask(taskId) {
-        if (!confirm('Are you sure you want to cancel this task?')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`/api/tasks/${taskId}`, {
-                method: 'DELETE'
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                if (result.success) {
-                    console.log('✅ Task cancelled:', taskId);
-                } else {
-                    alert('Failed to cancel task: ' + result.error);
-                }
-            } else {
-                alert('Failed to cancel task. Please try again.');
-            }
-        } catch (error) {
-            console.error('Error cancelling task:', error);
-            alert('Failed to cancel task. Please check your connection.');
-        }
-    }
-
-    formatDateTime(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleTimeString() + ' ' + date.toLocaleDateString();
-    }
-
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return true;
+    } else {
+        console.warn('📊 [TELEMETRY] OpenTelemetry not available, using console logging');
+        return false;
     }
 }
 
-// Initialize the dashboard when the page loads
-let taskDashboard;
-document.addEventListener('DOMContentLoaded', () => {
-    taskDashboard = new TaskDashboard();
-});
+// Create a span for telemetry tracking
+function createSpan(name, attributes = {}) {
+    if (tracer) {
+        const span = tracer.startSpan(name, {
+            attributes: {
+                'service.name': 'liveview-client',
+                'service.version': '1.0.0',
+                ...attributes
+            }
+        });
+        return span;
+    }
+    return null;
+}
+
+// Log telemetry event (fallback when OpenTelemetry not available)
+function logTelemetryEvent(eventType, data) {
+    const timestamp = new Date().toISOString();
+    console.log(`📊 [TELEMETRY] ${timestamp} - ${eventType}:`, data);
+}
+
+/**
+ * Initialize WebSocket connection to the LiveView server
+ * Sets up message handlers and connection management
+ */
+function initWebSocketConnection() {
+    // Initialize telemetry
+    initTelemetry();
+
+    // Create span for connection initialization
+    const span = createSpan('websocket.init', {
+        'websocket.url': location.host + '/ws/'
+    });
+
+    logTelemetryEvent('CONNECTION_INIT', {
+        url: location.host + '/ws/',
+        timestamp: Date.now()
+    });
+
+    connect();
+
+    if (span) span.end();
+}
+
+/**
+ * Establish WebSocket connection with automatic reconnection
+ * Handles both initial page loads and subsequent partial updates
+ */
+function connect() {
+    // Prevent multiple connection attempts
+    if (isConnecting || (window.ws && window.ws.readyState === WebSocket.CONNECTING)) {
+        logTelemetryEvent('CONNECTION_SKIPPED', { reason: 'already_connecting' });
+        return;
+    }
+
+    // Don't reconnect if already connected
+    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+        logTelemetryEvent('CONNECTION_SKIPPED', { reason: 'already_connected' });
+        return;
+    }
+
+    isConnecting = true;
+
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = protocol + '//' + location.host + '/ws/';
+
+    const connectSpan = createSpan('websocket.connect', {
+        'websocket.url': wsUrl,
+        'websocket.protocol': protocol
+    });
+
+    logTelemetryEvent('WEBSOCKET_CONNECTING', { url: wsUrl });
+
+    window.ws = new WebSocket(wsUrl);
+
+    window.ws.onopen = function() {
+        isConnecting = false; // Reset connecting flag
+
+        logTelemetryEvent('WEBSOCKET_CONNECTED', {
+            url: wsUrl,
+            readyState: window.ws.readyState
+        });
+
+        if (connectSpan) {
+            connectSpan.setAttributes({
+                'websocket.connection_status': 'connected'
+            });
+            connectSpan.end();
+        }
+    };
+
+    window.ws.onmessage = function(event) {
+        const messageSpan = createSpan('websocket.message_received');
+
+        try {
+            const data = JSON.parse(event.data);
+
+            logTelemetryEvent('WEBSOCKET_MESSAGE_RECEIVED', {
+                type: data.type,
+                size: event.data.length,
+                timestamp: Date.now()
+            });
+
+            if (messageSpan) {
+                messageSpan.setAttributes({
+                    'message.type': data.type,
+                    'message.size': event.data.length
+                });
+            }
+
+            if (data.type === 'full_page_load') {
+                logTelemetryEvent('FULL_PAGE_LOAD', {
+                    htmlSize: data.html?.length || 0
+                });
+
+                // Initial connection - replace entire document
+                // Mark that we're doing a full page replacement to avoid reconnection loop
+                window.fullPageReplacement = true;
+                document.documentElement.innerHTML = data.html;
+                // Don't reconnect - the new page will have its own script that will connect
+
+            } else if (data.type === 'task_grid_update') {
+                logTelemetryEvent('TASK_GRID_UPDATE', {
+                    htmlSize: data.html?.length || 0
+                });
+
+                // Partial update - use DOM diffing to update only changed content
+                updateTaskGrid(data.html);
+            }
+
+        } catch (error) {
+            logTelemetryEvent('MESSAGE_PARSE_ERROR', {
+                error: error.message,
+                rawMessage: event.data
+            });
+
+            if (messageSpan) {
+                messageSpan.recordException(error);
+                messageSpan.setStatus({
+                    code: 2, // ERROR
+                    message: error.message
+                });
+            }
+        } finally {
+            if (messageSpan) messageSpan.end();
+        }
+    };
+
+    window.ws.onclose = function(event) {
+        isConnecting = false; // Reset connecting flag
+
+        logTelemetryEvent('WEBSOCKET_CLOSED', {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean
+        });
+
+        if (connectSpan) {
+            connectSpan.setAttributes({
+                'websocket.connection_status': 'closed',
+                'websocket.close_code': event.code
+            });
+            connectSpan.end();
+        }
+
+        // Only reconnect if it's not due to a full page replacement
+        if (!window.fullPageReplacement) {
+            logTelemetryEvent('WEBSOCKET_RECONNECTING', { reason: 'connection_lost' });
+            setTimeout(connect, 1000);
+        } else {
+            logTelemetryEvent('WEBSOCKET_NOT_RECONNECTING', { reason: 'full_page_replacement' });
+        }
+    };
+
+    window.ws.onerror = function(error) {
+        isConnecting = false; // Reset connecting flag
+
+        logTelemetryEvent('WEBSOCKET_ERROR', {
+            error: error.type || 'unknown'
+        });
+
+        if (connectSpan) {
+            connectSpan.setAttributes({
+                'websocket.connection_status': 'error'
+            });
+            connectSpan.recordException(new Error('WebSocket connection error'));
+            connectSpan.end();
+        }
+
+        // Only reconnect on error if it's not due to a full page replacement
+        if (!window.fullPageReplacement) {
+            logTelemetryEvent('WEBSOCKET_RECONNECTING', { reason: 'error' });
+            setTimeout(connect, 1000);
+        }
+    };
+}
+
+/**
+ * Update the task grid using DOM diffing
+ * Compares new HTML with existing content and updates only what changed
+ *
+ * @param {string} newHtml - New HTML content for the task grid
+ */
+function updateTaskGrid(newHtml) {
+    const taskGrid = document.getElementById('task-grid');
+    if (!taskGrid || !newHtml) return;
+
+    // Parse the new HTML content
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = newHtml;
+
+    // Update each task column independently
+    const newColumns = tempDiv.querySelectorAll('.task-column');
+    newColumns.forEach((newColumn, index) => {
+        const existingColumn = taskGrid.children[index];
+        if (existingColumn && newColumn) {
+
+            // Update task count badge if changed
+            const newCount = newColumn.querySelector('.task-count');
+            const existingCount = existingColumn.querySelector('.task-count');
+            if (newCount && existingCount && newCount.textContent !== existingCount.textContent) {
+                existingCount.textContent = newCount.textContent;
+            }
+
+            // Update task list content if changed
+            const newTaskList = newColumn.querySelector('.task-list');
+            const existingTaskList = existingColumn.querySelector('.task-list');
+            if (newTaskList && existingTaskList && newTaskList.innerHTML !== existingTaskList.innerHTML) {
+                existingTaskList.innerHTML = newTaskList.innerHTML;
+            }
+        }
+    });
+}
+
+/**
+ * Create a new task via WebSocket
+ * Sends a task creation message to the server
+ *
+ * @param {string} taskType - Type of task to create ('quick', 'long', 'error')
+ */
+function createTask(taskType) {
+    const span = createSpan('user.create_task', {
+        'task.type': taskType,
+        'user.action': 'button_click'
+    });
+
+    logTelemetryEvent('USER_CREATE_TASK_CLICKED', {
+        taskType: taskType,
+        timestamp: Date.now(),
+        buttonId: `create-${taskType}-task`
+    });
+
+    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+        const message = {
+            type: 'create_task',
+            task_type: taskType
+        };
+
+        logTelemetryEvent('WEBSOCKET_MESSAGE_SENT', {
+            type: 'create_task',
+            taskType: taskType,
+            messageSize: JSON.stringify(message).length
+        });
+
+        window.ws.send(JSON.stringify(message));
+
+        if (span) {
+            span.setAttributes({
+                'websocket.message_sent': true,
+                'websocket.ready_state': window.ws.readyState
+            });
+            span.end();
+        }
+    } else {
+        const errorMessage = `WebSocket not connected (state: ${window.ws ? window.ws.readyState : 'null'})`;
+
+        logTelemetryEvent('WEBSOCKET_SEND_ERROR', {
+            action: 'create_task',
+            taskType: taskType,
+            error: errorMessage,
+            wsState: window.ws ? window.ws.readyState : null
+        });
+
+        if (span) {
+            span.recordException(new Error(errorMessage));
+            span.setStatus({
+                code: 2, // ERROR
+                message: errorMessage
+            });
+            span.end();
+        }
+
+        console.error(`❌ [TELEMETRY] ${errorMessage} - cannot create ${taskType} task`);
+    }
+}
+
+/**
+ * Cancel an existing task via WebSocket
+ * Sends a task cancellation message to the server
+ *
+ * @param {string} taskId - UUID of the task to cancel
+ */
+function cancelTask(taskId) {
+    const span = createSpan('user.cancel_task', {
+        'task.id': taskId,
+        'user.action': 'button_click'
+    });
+
+    logTelemetryEvent('USER_CANCEL_TASK_CLICKED', {
+        taskId: taskId,
+        timestamp: Date.now()
+    });
+
+    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+        const message = {
+            type: 'cancel_task',
+            task_id: taskId
+        };
+
+        logTelemetryEvent('WEBSOCKET_MESSAGE_SENT', {
+            type: 'cancel_task',
+            taskId: taskId,
+            messageSize: JSON.stringify(message).length
+        });
+
+        window.ws.send(JSON.stringify(message));
+
+        if (span) {
+            span.setAttributes({
+                'websocket.message_sent': true,
+                'websocket.ready_state': window.ws.readyState
+            });
+            span.end();
+        }
+    } else {
+        const errorMessage = `WebSocket not connected (state: ${window.ws ? window.ws.readyState : 'null'})`;
+
+        logTelemetryEvent('WEBSOCKET_SEND_ERROR', {
+            action: 'cancel_task',
+            taskId: taskId,
+            error: errorMessage,
+            wsState: window.ws ? window.ws.readyState : null
+        });
+
+        if (span) {
+            span.recordException(new Error(errorMessage));
+            span.setStatus({
+                code: 2, // ERROR
+                message: errorMessage
+            });
+            span.end();
+        }
+
+        console.error(`❌ [TELEMETRY] ${errorMessage} - cannot cancel task ${taskId}`);
+    }
+}
+
+/**
+ * Request a refresh of current task state
+ * Triggers a server-side task list update
+ */
+function refreshTasks() {
+    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'refresh' }));
+    }
+}
+
+/**
+ * Start automatic refresh polling
+ * Requests task updates every 2 seconds to keep UI in sync
+ */
+function startAutoRefresh() {
+    setInterval(() => {
+        refreshTasks();
+    }, 2000);
+}
+
+// Auto-initialize when script loads
+if (typeof window !== 'undefined') {
+    // Start WebSocket connection
+    initWebSocketConnection();
+
+    // Start automatic refresh polling
+    startAutoRefresh();
+
+    // Export functions to global scope for HTML onclick handlers
+    window.createTask = createTask;
+    window.cancelTask = cancelTask;
+    window.refreshTasks = refreshTasks;
+}

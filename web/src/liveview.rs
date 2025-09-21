@@ -60,6 +60,49 @@ impl LiveViewSession {
                     meta charset="UTF-8";
                     meta name="viewport" content="width=device-width, initial-scale=1.0";
                     title { "Task Overlord LiveView" }
+
+                    // Simple telemetry implementation (no external dependencies)
+                    script {
+                        (PreEscaped(r#"
+                            // Simple OpenTelemetry-compatible implementation
+                            window.opentelemetry = {
+                                trace: {
+                                    getTracer: function(name, version) {
+                                        return {
+                                            startSpan: function(name, options) {
+                                                const span = {
+                                                    name: name,
+                                                    startTime: Date.now(),
+                                                    attributes: options?.attributes || {},
+
+                                                    setAttributes: function(attrs) {
+                                                        Object.assign(this.attributes, attrs);
+                                                    },
+
+                                                    recordException: function(error) {
+                                                        this.attributes['exception.type'] = error.constructor.name;
+                                                        this.attributes['exception.message'] = error.message;
+                                                    },
+
+                                                    setStatus: function(status) {
+                                                        this.attributes['span.status.code'] = status.code;
+                                                        this.attributes['span.status.message'] = status.message;
+                                                    },
+
+                                                    end: function() {
+                                                        this.endTime = Date.now();
+                                                        this.duration = this.endTime - this.startTime;
+                                                        console.log('🔍 [OTEL SPAN]', this.name, '(' + this.duration + 'ms)', this.attributes);
+                                                    }
+                                                };
+                                                return span;
+                                            }
+                                        };
+                                    }
+                                }
+                            };
+                        "#))
+                    }
                     style {
                         (PreEscaped(r#"
                             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -207,7 +250,7 @@ impl LiveViewSession {
                 body {
                     div class="container" {
                         div class="header" {
-                            h1 { "🎯 Task Overlord LiveView" }
+                            h1 { "Task Overlord LiveView" }
                             div class="controls" {
                                 button class="btn btn-quick" onclick="createTask('quick')" { "⚡ Quick Task (2s)" }
                                 button class="btn btn-long" onclick="createTask('long')" { "⏰ Long Task (10s)" }
@@ -220,7 +263,7 @@ impl LiveViewSession {
                             (self.render_task_column("Error", &self.get_tasks_by_status(TaskStatus::Error), "error"))
                         }
                     }
-                    script src="/ws_connect.js" {}
+                    script src="/static/app.js" {}
                 }
             }
         }
